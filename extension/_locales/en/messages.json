@@ -1,0 +1,6 @@
+{
+  "extName": { "message": "Notion Calendar Quick Add" },
+  "extDescription": { "message": "Type an event in plain language; Claude parses it and adds it to your Notion calendar." },
+  "actionTitle": { "message": "Add an event to Notion Calendar" },
+  "commandOpen": { "message": "Open the event input" }
+}

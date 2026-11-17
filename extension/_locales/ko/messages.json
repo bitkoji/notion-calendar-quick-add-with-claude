@@ -1,0 +1,6 @@
+{
+  "extName": { "message": "노션 캘린더 빠른 추가" },
+  "extDescription": { "message": "자연어로 입력한 일정을 Claude가 해석해 Notion 캘린더에 추가합니다." },
+  "actionTitle": { "message": "노션 캘린더에 일정 추가" },
+  "commandOpen": { "message": "일정 입력 창 열기" }
+}
