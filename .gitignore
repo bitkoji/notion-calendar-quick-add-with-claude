@@ -1,0 +1,23 @@
+# Personal settings (contains the Notion token) - never commit
+# 개인 설정 (노션 토큰 포함) - 절대 커밋하지 않기
+.env
+
+# Generated per PC by install_host.py (contains local paths and the extension ID)
+# install_host.py가 PC마다 생성하는 파일 (로컬 경로·확장 ID 포함)
+native_host/host.bat
+native_host/com.notionupload.calendar.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+# 에디터·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Claude Code plugin state
+# 로컬 Claude Code 플러그인 상태
+.omc/
