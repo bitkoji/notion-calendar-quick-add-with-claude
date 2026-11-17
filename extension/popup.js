@@ -640,8 +640,21 @@ function renderWeekCalendar(data) {
 }
 
 let weekSeq = 0;
+// Weeks away from this week (-1 = last week). Starts at this week every time the popup opens.
+// 이번 주에서 몇 주 떨어졌는지 (-1 = 지난 주). 팝업을 열 때마다 이번 주부터 시작한다.
+let weekOffset = 0;
 
-/** Load and show this week (again after any change) / 이번 주 일정을 불러와 보여 준다 (바뀔 때마다 다시) */
+/** "This week" / "Last week" / "Next week", or "Week" further away / 이번 주 · 지난 주 · 다음 주, 더 멀면 주간 */
+const weekTitleKey = (offset) =>
+  offset === 0 ? "popup.week.title" : offset === -1 ? "popup.week.prevTitle" : offset === 1 ? "popup.week.nextTitle" : "popup.week.otherTitle";
+
+function setWeekTitle(range) {
+  $("week-title").innerHTML = `${icon("clock")}${escapeHtml(t(weekTitleKey(weekOffset)))}` +
+    (range ? `<span class="range">${escapeHtml(range)}</span>` : "");
+  $("week-today").hidden = weekOffset === 0;
+}
+
+/** Load and show the week being viewed (again after any change) / 보고 있는 주의 일정을 불러와 보여 준다 (바뀔 때마다 다시) */
 async function loadWeek() {
   const view = getWeekView();
   // The calendar needs more room, so the popup gets wider / 캘린더는 칸이 많아 팝업을 넓힌다
@@ -652,22 +665,37 @@ async function loadWeek() {
   $("week-legend").innerHTML = ["past", "now", "next"]
     .map((st) => `<span>${weekMark(st)}${escapeHtml(t(`popup.week.${st}`))}</span>`).join("");
   if (!weekBody.innerHTML) {
-    $("week-title").innerHTML = `${icon("clock")}${escapeHtml(t("popup.week.title"))}`;
+    setWeekTitle("");
     weekBody.innerHTML = `<p class="note">${escapeHtml(t("popup.week.loading"))}</p>`;
   }
+  // Keep the old week visible but faded while the next one loads / 다음 주를 불러오는 동안 이전 내용을 흐리게 둔다
+  weekBody.classList.add("loading");
   try {
-    const data = await callHost({ action: "week" });
+    const data = await callHost({ action: "week", offset: weekOffset });
     if (seq !== weekSeq) return;
-    $("week-title").innerHTML = `${icon("clock")}${escapeHtml(t("popup.week.title"))}` +
-      `<span class="range">${escapeHtml(`${dayLabel(data.from)} ~ ${dayLabel(data.to)}`)}</span>`;
+    setWeekTitle(`${dayLabel(data.from)} ~ ${dayLabel(data.to)}`);
     weekBody.innerHTML = view === "calendar" ? renderWeekCalendar(data) : renderWeekList(data);
   } catch (e) {
     if (seq !== weekSeq) return;
     // Not set up yet: the setup notice elsewhere covers it / 아직 설정 전이면 다른 곳의 안내로 충분
     if (e instanceof SetupError) return (weekEl.hidden = true);
     weekBody.innerHTML = `<p class="note">${escapeHtml(t("popup.week.error"))}</p>`;
+  } finally {
+    if (seq === weekSeq) weekBody.classList.remove("loading");
   }
 }
+
+function moveWeek(to) {
+  weekOffset = to;
+  setWeekTitle("");
+  loadWeek();
+}
+
+$("week-prev").innerHTML = icon("chevron");
+$("week-next").innerHTML = icon("chevron");
+$("week-prev").addEventListener("click", () => moveWeek(weekOffset - 1));
+$("week-next").addEventListener("click", () => moveWeek(weekOffset + 1));
+$("week-today").addEventListener("click", () => moveWeek(0));
 
 weekBody.addEventListener("click", (e) => {
   const el = e.target.closest("[data-url]");

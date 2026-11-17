@@ -40,8 +40,14 @@
   <section id="week" class="week" hidden>
     <div class="week-head">
       <h2 class="section-label" id="week-title"></h2>
-      <span class="week-legend" id="week-legend"></span>
+      <!-- Move between weeks / 주 이동 -->
+      <div class="week-nav">
+        <button id="week-prev" type="button" class="icon-btn small flip" data-i18n-title="popup.week.goPrev"></button>
+        <button id="week-today" type="button" class="btn btn-secondary btn-small" data-i18n="popup.week.goToday" hidden></button>
+        <button id="week-next" type="button" class="icon-btn small" data-i18n-title="popup.week.goNext"></button>
+      </div>
     </div>
+    <div class="week-legend" id="week-legend"></div>
     <div id="week-body"></div>
   </section>
 

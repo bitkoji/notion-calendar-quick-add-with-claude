@@ -312,10 +312,17 @@ kbd {
 body.wide { width: 600px; }
 .week { margin-top: 18px; }
 .week[hidden] { display: none; }
-.week-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.week-head .section-label { margin: 0; }
-.week-head .range { margin-left: 2px; color: var(--text-lighter); font-weight: 500; }
-.week-legend { display: flex; gap: 8px; color: var(--text-lighter); font-size: 11px; white-space: nowrap; }
+.week-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.week-head .section-label { margin: 0; min-width: 0; flex-wrap: wrap; }
+.week-head .range { margin-left: 2px; color: var(--text-lighter); font-weight: 500; white-space: nowrap; }
+.week-nav { display: flex; align-items: center; gap: 2px; flex: none; }
+.week-nav .icon-btn.small { width: 26px; height: 26px; }
+.week-nav .btn-small { height: 26px; padding: 0 8px; }
+.week-nav .btn-small[hidden] { display: none; }
+/* Left arrow = the right chevron turned around / 왼쪽 화살표는 오른쪽 모양을 뒤집어 쓴다 */
+.icon-btn.flip svg.i { transform: rotate(180deg); }
+.week-legend { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; color: var(--text-lighter); font-size: 11px; white-space: nowrap; }
+#week-body.loading { opacity: 0.5; transition: opacity var(--motion); }
 .week-legend > span { display: inline-flex; align-items: center; gap: 2px; }
 .wk-mark { display: inline-grid; place-items: center; flex: none; }
 .wk-mark svg.i { width: 14px; height: 14px; }
