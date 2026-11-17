@@ -12,7 +12,7 @@ Requests / 요청:
   {"action": "parse", "text": "..."}     → {"events": [...], "cancellations": [{..., "matches": [...]}]}
   {"action": "apply", "add": [...], "delete": [{"id", "title"}]}
                                          → {"added": [{"id", "title", "url"}], "deleted": [{"id", "title"}]}
-  {"action": "week"}                     → {"from", "to", "today", "events": [...]}  this week / 이번 주 (WEEK_START)
+  {"action": "week", "offset"?: n}       → {"offset", "from", "to", "today", "events": [...]}  this week ± n weeks / 이번 주 ± n주 (WEEK_START)
   {"action": "restore", "id": "..."}     → {"url"} or {"gone": true} if permanently deleted / 완전히 삭제됐으면 gone
   {"action": "get_settings"}             → {"settings": {...}, "token_set", "claude": {...}}  (never sends any part of the token / 토큰은 일부도 보내지 않음)
   {"action": "test_connection", "token"?, "database_id"}
@@ -191,17 +191,23 @@ def handle(msg: dict) -> dict:
             added.append({"title": ev["title"], **notion.add_event(ev)})
         return {"ok": True, "added": added, "deleted": deleted, "moved": moved}
     if action == "week":
-        # This week (from the configured first day) in the local timezone, plus events from the
-        # week before that run into it
-        # 로컬 기준 이번 주(설정한 시작 요일부터 7일). 지난주에 시작해 이번 주까지 이어지는 일정도 포함
+        # A week (from the configured first day) in the local timezone, plus events from the week
+        # before that run into it. "offset" moves it by whole weeks (-1 = last week, 1 = next week).
+        # 로컬 기준 한 주(설정한 시작 요일부터 7일). 그 전 주에 시작해 이어지는 일정도 포함.
+        # "offset"으로 주 단위로 옮긴다 (-1 = 지난 주, 1 = 다음 주).
+        try:
+            offset = max(-520, min(520, int(msg.get("offset") or 0)))
+        except (TypeError, ValueError):
+            offset = 0
         today = datetime.now(ZoneInfo(notion_cal.TIMEZONE)).date()
-        first, last = notion_cal.week_range(today)
+        first, last = (d + timedelta(weeks=offset) for d in notion_cal.week_range(today))
         events = [
             {k: ev[k] for k in ("id", "title", "start", "end", "all_day", "url", "location")}
             for ev in notion_client().find_events((first - timedelta(days=7)).isoformat(), last.isoformat())
             if notion_cal.local_date(ev["end"] or ev["start"]) >= first
         ]
-        return {"ok": True, "from": first.isoformat(), "to": last.isoformat(), "today": today.isoformat(), "events": events}
+        return {"ok": True, "offset": offset, "from": first.isoformat(), "to": last.isoformat(),
+                "today": today.isoformat(), "events": events}
     if action == "restore":
         page_id = str(msg.get("id", ""))
         if not re.fullmatch(r"[0-9a-fA-F]{32}", page_id.replace("-", "")):
