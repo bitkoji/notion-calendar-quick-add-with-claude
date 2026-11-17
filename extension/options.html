@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Notion Calendar Quick Add · Settings</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body class="options">
+  <div class="layout">
+  <!-- Sidebar: jump to a section; "New version" shows next to Updates -->
+  <!-- 사이드바: 섹션으로 이동. 새 버전이 있으면 업데이트 옆에 표시 -->
+  <nav id="nav" class="sidenav">
+    <a href="#sec-notion" data-i18n="options.notion.title"></a>
+    <a href="#sec-claude" data-i18n="options.claude.title"></a>
+    <a href="#sec-locale" data-i18n="options.locale.title"></a>
+    <a href="#sec-props" data-i18n="options.props.title"></a>
+    <a href="#sec-view" data-i18n="options.view.title"></a>
+    <a href="#sec-shortcut" data-i18n="options.shortcut.title"></a>
+    <a href="#sec-update"><span data-i18n="options.update.title"></span><span id="navUpdateBadge" class="nav-badge" data-i18n="options.update.badge" hidden></span></a>
+  </nav>
+  <main class="page">
+    <header class="page-header">
+      <img src="icons/48.png" width="40" height="40" alt="">
+      <div>
+        <h1 data-i18n="options.title"></h1>
+        <p class="caption" data-i18n-html="options.caption"></p>
+      </div>
+    </header>
+
+    <section id="pageStatus" class="banner" role="status" hidden></section>
+
+    <form id="form" autocomplete="off">
+      <!-- 1. Notion connection / 노션 연결 -->
+      <section id="sec-notion" class="card">
+        <h2 class="card-title" data-i18n="options.notion.title"></h2>
+
+        <label class="field">
+          <span class="label" data-i18n="options.notion.token"></span>
+          <span class="input-wrap">
+            <input id="token" type="password" spellcheck="false" placeholder="ntn_…">
+            <button id="toggleToken" type="button" class="icon-btn inline"></button>
+          </span>
+          <span id="tokenHelp" class="help"></span>
+        </label>
+
+        <label class="field">
+          <span class="label" data-i18n="options.notion.database"></span>
+          <span class="input-wrap">
+            <input id="database" type="text" class="masked" spellcheck="false" data-i18n-placeholder="options.notion.databasePlaceholder">
+            <button id="toggleDb" type="button" class="icon-btn inline"></button>
+          </span>
+          <span class="help" data-i18n="options.notion.databaseHelp"></span>
+        </label>
+
+        <div class="row start">
+          <button id="test" type="button" class="btn btn-secondary" data-i18n="options.notion.test"></button>
+        </div>
+        <section id="testStatus" class="banner" role="status" hidden></section>
+      </section>
+
+      <!-- 2. Claude model / Claude 모델 -->
+      <section id="sec-claude" class="card">
+        <h2 class="card-title" data-i18n="options.claude.title"></h2>
+        <div class="field">
+          <span class="label" data-i18n="options.claude.model"></span>
+          <div class="segmented" role="radiogroup">
+            <label><input type="radio" name="model" value=""><span><b>Opus</b><small data-i18n="options.claude.opus"></small></span></label>
+            <label><input type="radio" name="model" value="sonnet"><span><b>Sonnet</b><small data-i18n="options.claude.sonnet"></small></span></label>
+            <label><input type="radio" name="model" value="haiku"><span><b>Haiku</b><small data-i18n="options.claude.haiku"></small></span></label>
+          </div>
+          <span class="help" data-i18n="options.claude.help"></span>
+        </div>
+        <div id="claudeStatus" class="status-line"><span class="dot"></span><span data-i18n="options.claude.checking"></span></div>
+      </section>
+
+      <!-- 3. Language & region / 언어 및 지역 -->
+      <section id="sec-locale" class="card">
+        <h2 class="card-title" data-i18n="options.locale.title"></h2>
+        <div class="grid">
+          <label class="field">
+            <span class="label" data-i18n="options.locale.language"></span>
+            <select id="language"></select>
+            <span class="help" data-i18n="options.locale.languageHelp"></span>
+          </label>
+          <label class="field">
+            <span class="label" data-i18n="options.locale.timezone"></span>
+            <select id="TIMEZONE"></select>
+            <span class="help" data-i18n="options.locale.timezoneHelp"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- 4. Database properties / 데이터베이스 속성 -->
+      <section id="sec-props" class="card">
+        <h2 class="card-title" data-i18n="options.props.title"></h2>
+        <p class="card-caption" data-i18n="options.props.caption"></p>
+        <div class="grid">
+          <label class="field"><span class="label" data-i18n="options.props.titleProp"></span><select id="NOTION_TITLE_PROPERTY" data-type="title"></select></label>
+          <label class="field"><span class="label" data-i18n="options.props.date"></span><select id="NOTION_DATE_PROPERTY" data-type="date"></select></label>
+          <label class="field"><span class="label" data-i18n="options.props.location"></span><select id="NOTION_LOCATION_PROPERTY" data-type="rich_text"></select></label>
+          <label class="field"><span class="label" data-i18n="options.props.description"></span><select id="NOTION_DESCRIPTION_PROPERTY" data-type="rich_text"></select></label>
+        </div>
+        <p id="propsHelp" class="help"></p>
+        <label class="field narrow week-start">
+          <span class="label" data-i18n="options.locale.weekStart"></span>
+          <select id="WEEK_START"></select>
+          <span class="help" data-i18n="options.locale.weekStartHelp"></span>
+        </label>
+      </section>
+
+      <!-- 5. This week's events / 이번 주 일정 표시 -->
+      <section id="sec-view" class="card">
+        <h2 class="card-title" data-i18n="options.view.title"></h2>
+        <div class="field">
+          <span class="label" data-i18n="options.view.label"></span>
+          <div class="segmented" role="radiogroup">
+            <label><input type="radio" name="weekView" value="list"><span><b data-i18n="options.view.list"></b><small data-i18n="options.view.listHelp"></small></span></label>
+            <label><input type="radio" name="weekView" value="calendar"><span><b data-i18n="options.view.calendar"></b><small data-i18n="options.view.calendarHelp"></small></span></label>
+            <label><input type="radio" name="weekView" value="off"><span><b data-i18n="options.view.off"></b><small data-i18n="options.view.offHelp"></small></span></label>
+          </div>
+          <span class="help" data-i18n="options.view.help"></span>
+        </div>
+      </section>
+
+      <!-- 6. Keyboard shortcut / 단축키 -->
+      <section id="sec-shortcut" class="card">
+        <h2 class="card-title" data-i18n="options.shortcut.title"></h2>
+        <div class="update-row">
+          <div id="shortcutStatus" class="status-line"></div>
+          <button id="changeShortcut" type="button" class="btn btn-secondary btn-small" data-i18n="options.shortcut.change"></button>
+        </div>
+        <p class="help" data-i18n="options.shortcut.help"></p>
+      </section>
+
+      <!-- 7. Updates / 업데이트 -->
+      <section id="sec-update" class="card">
+        <h2 class="card-title" data-i18n="options.update.title"></h2>
+        <div class="update-row">
+          <div id="versionStatus" class="status-line"></div>
+          <button id="checkNow" type="button" class="btn btn-secondary btn-small" data-i18n="options.update.checkNow"></button>
+        </div>
+        <label class="check">
+          <input id="updateCheck" type="checkbox">
+          <span>
+            <span class="label" data-i18n="options.update.auto"></span>
+            <span class="help" data-i18n="options.update.autoHelp"></span>
+          </span>
+        </label>
+        <p class="help" data-i18n-html="options.update.how"></p>
+      </section>
+
+      <footer class="savebar">
+        <section id="saveStatus" class="banner" role="status" hidden></section>
+        <button id="save" type="submit" class="btn btn-primary" data-i18n="options.save"></button>
+      </footer>
+    </form>
+  </main>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

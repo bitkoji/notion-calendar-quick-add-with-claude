@@ -1,0 +1,218 @@
+/* Reuses the tokens, buttons and banners from popup.css and adds only the page layout.
+   popup.css 의 토큰·버튼·배너를 그대로 쓰고, 페이지 레이아웃만 더한다 */
+body.options {
+  width: auto;
+  min-height: 100vh;
+  padding: 40px 16px 120px;
+  background: var(--fill-grey);
+}
+@media (prefers-color-scheme: dark) {
+  body.options { background: oklch(0.219 0.004 286); } /* grey-950 (surface-low) */
+}
+
+/* Sidebar + content / 사이드바 + 본문 */
+.layout { display: grid; grid-template-columns: 180px minmax(0, 640px); gap: 32px; justify-content: center; }
+.page { min-width: 0; }
+.card { scroll-margin-top: 24px; }
+
+.sidenav {
+  position: sticky;
+  top: 40px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Starts level with the first card (below the page header)
+     첫 카드 높이에서 시작 (페이지 제목 아래) */
+  padding-top: 74px;
+}
+.sidenav a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-8);
+  color: var(--text-light);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--motion), color var(--motion);
+}
+.sidenav a:hover { background: var(--fill-neutral-light); color: var(--text); }
+.sidenav a:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--action-light); }
+.sidenav a.active { background: var(--surface); color: var(--text-heaviest); font-weight: 700; box-shadow: var(--elevation-1); }
+.nav-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--accent-blue-heavy);
+  color: var(--action);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
+.nav-badge[hidden] { display: none; }
+
+/* Narrow window: the sidebar becomes a menu bar across the top
+   좁은 창: 사이드바가 위쪽 가로 메뉴가 된다 */
+@media (max-width: 880px) {
+  .layout { grid-template-columns: minmax(0, 640px); gap: 0; }
+  .sidenav {
+    top: 0;
+    z-index: 2;
+    flex-direction: row;
+    overflow-x: auto;
+    margin: -40px -16px 16px;
+    padding: 10px 16px;
+    background: var(--fill-grey);
+    box-shadow: 0 1px 0 var(--border-neutral);
+  }
+  .sidenav a { flex: none; }
+  .card { scroll-margin-top: 72px; }
+}
+@media (max-width: 880px) and (prefers-color-scheme: dark) {
+  .sidenav { background: oklch(0.219 0.004 286); }
+}
+
+.page-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.page-header img { border-radius: 10px; flex: none; }
+.page-header h1 { margin: 0; color: var(--text-heaviest); font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.page-header code, .help code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--fill-neutral-light);
+  font: 12px ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+#pageStatus { margin: 0 0 16px; }
+
+/* Card */
+.card {
+  margin-bottom: 16px;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--elevation-1);
+}
+.card-title { margin: 0 0 14px; color: var(--text-heaviest); font-size: 15px; font-weight: 700; }
+.card-caption { margin: -8px 0 14px; color: var(--text-light); font-size: 13px; }
+
+/* Field */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field:last-child { margin-bottom: 0; }
+.field.narrow { max-width: 280px; }
+.label { color: var(--text); font-size: 13px; font-weight: 700; }
+.help { color: var(--text-lighter); font-size: 12px; word-break: keep-all; overflow-wrap: anywhere; }
+
+input[type="text"], input[type="password"], select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-8);
+  background: var(--fill-neutral-lighter);
+  box-shadow: inset 0 0 0 1px var(--border-neutral);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  transition: box-shadow var(--motion), background var(--motion);
+}
+input::placeholder { color: var(--text-lighter); }
+input:hover, select:hover { box-shadow: inset 0 0 0 1px var(--border-neutral-heavy); }
+input:focus, select:focus {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--action), 0 0 0 3px var(--action-light);
+}
+select { cursor: pointer; }
+select option { background: var(--surface); color: var(--text); }
+
+.input-wrap { position: relative; display: block; }
+.input-wrap input { padding-right: 44px; }
+input.masked:not(:placeholder-shown) { -webkit-text-security: disc; letter-spacing: 0.1em; }
+.icon-btn.inline { position: absolute; top: 4px; right: 4px; margin: 0; }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+.grid .field { margin: 0; }
+#propsHelp { margin: 12px 0 0; }
+/* First day of the week, below the properties / 속성 아래의 한 주의 시작 */
+.field.week-start { margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--border-neutral); max-width: none; }
+.field.week-start select { max-width: 280px; }
+
+.row.start { justify-content: flex-start; margin-top: 0; }
+#testStatus { margin-top: 12px; }
+
+/* SegmentedControl */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-12);
+  background: var(--fill-neutral-light);
+}
+.segmented label { position: relative; cursor: pointer; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 6px;
+  border-radius: var(--radius-8);
+  color: var(--text-light);
+  text-align: center;
+  transition: background var(--motion), color var(--motion), box-shadow var(--motion);
+}
+.segmented b { font-weight: 700; font-size: 14px; }
+.segmented small { font-size: 11px; color: var(--text-lighter); }
+.segmented label:hover span { color: var(--text); }
+.segmented input:checked + span {
+  background: var(--surface);
+  color: var(--action);
+  box-shadow: inset 0 0 0 1.5px var(--action), 0 1px 2px oklch(0 0 0 / 0.08);
+}
+.segmented input:checked + span small { color: var(--action); opacity: 0.85; }
+.segmented input:focus-visible + span { box-shadow: 0 0 0 3px var(--action-light); }
+
+/* Status line */
+.status-line { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--text-light); font-size: 13px; }
+.status-line .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--icon-neutral); flex: none; }
+.status-line.ok .dot { background: var(--success); }
+.status-line.bad .dot { background: var(--critical); }
+.status-line.bad { color: var(--critical); }
+.status-line.new .dot { background: var(--action); }
+.status-line.new { color: var(--text); }
+
+/* Updates card / 업데이트 카드 */
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.update-row .status-line { margin: 0; flex-wrap: wrap; }
+.update-row .status-line a { color: var(--action); font-weight: 700; text-decoration: none; }
+.update-row .status-line a:hover { text-decoration: underline; }
+.check { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0 12px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--action); cursor: pointer; }
+.check > span { display: flex; flex-direction: column; gap: 2px; }
+
+/* Keyboard shortcut / 단축키 */
+.status-line kbd { padding: 1px 6px; font-size: 12px; font-weight: 700; color: var(--text); }
+
+/* Save bar */
+.savebar {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--elevation-1), 0 8px 24px oklch(0 0 0 / 0.08);
+}
+.savebar .banner { flex: 1; margin: 0; padding: 8px 12px; }
+.savebar .btn { min-width: 96px; }
+
+@media (max-width: 520px) {
+  .grid { grid-template-columns: 1fr; }
+}
