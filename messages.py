@@ -87,9 +87,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ko": "'{name}' 속성은 텍스트 속성이어야 합니다.",
         "en": "The '{name}' property must be a text property.",
     },
+    "db.noLocation": {
+        "ko": "데이터베이스에 위치(텍스트) 속성이 없어 장소를 바꿀 수 없습니다. 설정 페이지에서 위치 속성을 고르세요.",
+        "en": "The database has no location (text) property, so the location can't be changed. Choose one on the settings page.",
+    },
     "db.badId": {
         "ko": "데이터베이스 ID를 찾지 못했습니다. 노션 데이터베이스 링크나 32자리 ID를 입력하세요.",
         "en": "No database ID found. Enter a Notion database link or a 32-character ID.",
+    },
+    "answer.notUnderstood": {
+        "ko": "알아듣지 못했습니다. 예: 다음 주 화요일 오후 3시, 강남역 · 장소가 없으면 '없음'",
+        "en": "Couldn't understand that. e.g. next Tuesday 3 PM, Gangnam Station · say 'none' if there's no place",
     },
     "input.empty": {
         "ko": "일정을 입력해 주세요.",
