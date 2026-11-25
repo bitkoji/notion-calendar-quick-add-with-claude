@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -77,8 +78,25 @@ EVENT_SCHEMA = {
                         "type": "boolean",
                         "description": "1~12시 숫자만 있고 오전/오후를 알 수 없으면 true (사용자에게 다시 묻는다). 종일 일정이나 분명하면 false",
                     },
+                    "missing": {
+                        "type": "array",
+                        "description": "사용자에게 물어볼, 말하지 않은 정보. 아래 규칙 참고. 없으면 빈 배열",
+                        "items": {"type": "string", "enum": ["date", "time", "location"]},
+                    },
+                    "repeat": {
+                        "type": "object",
+                        "description": "반복 일정. start는 첫 번째 일정. 반복이 아니면 freq='none'",
+                        "properties": {
+                            "freq": {"type": "string", "enum": ["none", "daily", "weekly", "monthly"]},
+                            "interval": {"type": "integer", "description": "몇 일/주/달마다 ('격주'=2). 기본 1"},
+                            "count": {"type": "integer", "description": "모두 몇 번인지 ('4주 동안' 매주=4, '5번'=5). 모르면 0"},
+                            "until": {"type": "string", "description": "마지막 날짜 YYYY-MM-DD ('12월까지'=12월 마지막 날). 모르면 빈 문자열"},
+                        },
+                        "required": ["freq", "interval", "count", "until"],
+                        "additionalProperties": False,
+                    },
                 },
-                "required": ["title", "all_day", "start", "end", "location", "description", "ampm_unclear"],
+                "required": ["title", "all_day", "start", "end", "location", "description", "ampm_unclear", "missing", "repeat"],
                 "additionalProperties": False,
             },
         },
@@ -105,7 +123,7 @@ EVENT_SCHEMA = {
         },
         "moves": {
             "type": "array",
-            "description": "기존 일정의 날짜/시간 변경. 새 시각은 프로그램이 원래 일정 기준으로 계산하므로 '변경 내용'만 적는다",
+            "description": "기존 일정의 날짜·시간·제목·장소 변경. 새 시각은 프로그램이 원래 일정 기준으로 계산하므로 '변경 내용'만 적는다",
             "items": {
                 "type": "object",
                 "properties": {
@@ -121,6 +139,8 @@ EVENT_SCHEMA = {
                     "shift_days": {"type": "integer", "description": "상대 이동 일수 ('다음날로'=1, '하루 당겨'=-1). 없으면 0"},
                     "shift_minutes": {"type": "integer", "description": "상대 이동 분 ('1시간 뒤로'=60, '30분 당겨'=-30). 없으면 0"},
                     "new_duration_minutes": {"type": "integer", "description": "소요 시간을 바꿀 때 새 길이(분). 유지하면 0"},
+                    "new_title": {"type": "string", "description": "제목을 바꿀 때 새 제목. 유지하면 빈 문자열"},
+                    "new_location": {"type": "string", "description": "장소를 바꿀 때 사용자가 쓴 새 장소 그대로. 유지하면 빈 문자열"},
                     "ampm_unclear": {
                         "type": "boolean",
                         "description": "new_time이 1~12시 숫자만 있고 오전/오후를 알 수 없으면 true. 아니면 false",
@@ -128,7 +148,7 @@ EVENT_SCHEMA = {
                 },
                 "required": [
                     "keyword", "date_from", "date_to", "time", "new_date", "new_time",
-                    "shift_days", "shift_minutes", "new_duration_minutes", "ampm_unclear",
+                    "shift_days", "shift_minutes", "new_duration_minutes", "new_title", "new_location", "ampm_unclear",
                 ],
                 "additionalProperties": False,
             },
@@ -209,6 +229,12 @@ def system_prompt(existing: list[dict] | None = None) -> str:
         f"- 한 주는 {weekdays[first.weekday()]}요일에 시작한다. '이번 주'는 {day(first)} ~ {day(last)}, "
         "'다음 주'는 그다음 7일, '지난 주'(지난주)는 그 앞 7일이다.\n"
         "- 시간 언급이 없으면 all_day=true로 하고 날짜만 쓴다.\n"
+        "- 너는 일정을 맡아 관리하는 비서다. 일정에 필요한데 사용자가 말하지 않은 정보는 missing에 넣어 사용자에게 묻는다:\n"
+        "  · date: 날짜(요일·'내일' 같은 표현 포함)를 전혀 말하지 않았으면. 이때 start에는 오늘 날짜를 임시로 쓴다. 반복 일정은 넣지 않는다.\n"
+        "  · time: 시각을 말하지 않았는데 시험·회의·약속·수업·진료·면접처럼 보통 정해진 시각이 있는 일정이면. "
+        "여행·휴가·생일·기념일·마감·공휴일처럼 원래 하루 종일인 일정이면 넣지 않는다.\n"
+        "  · location: 장소를 말하지 않았는데 약속·회의·진료·면접·모임·식사처럼 보통 가는 곳이 있는 일정이면. "
+        "온라인·전화·개인 할 일·마감·생일·기념일이면 넣지 않는다.\n"
         "- '아침'=09:00, '점심'=12:00, '오후'만 있으면 14:00, '저녁'=19:00 정도로 합리적으로 추정한다.\n"
         "- '3시', '7시 반'처럼 1~12시 숫자만 있고 오전/오후·아침/점심/저녁·새벽/밤 같은 단서가 없으면 "
         "ampm_unclear=true로 하고, 시각은 더 그럴듯한 쪽으로 채운다 (사용자가 나중에 고른다). "
@@ -217,6 +243,9 @@ def system_prompt(existing: list[dict] | None = None) -> str:
         "- 한 문장에 여러 일정이 있으면 모두 events에 담는다. 일정이 없으면 빈 배열을 반환한다.\n"
         "- 제목은 핵심만 짧게. 장소(강의실 번호·건물·가게·주소 등)는 사용자가 쓴 표현 그대로 location에, "
         "그 외 메모·준비물은 description에 넣는다. 장소를 제목에 중복해 넣지 않는다.\n"
+        "- '매일', '매주 화요일', '격주', '매달 15일'처럼 반복하는 일정은 하나만 만들고 repeat에 적는다. start는 첫 번째 일정이다. "
+        "'매주 화·목'처럼 요일이 여럿이면 요일마다 일정을 하나씩 만든다. 횟수·기간을 말하지 않으면 count=0, until=''로 둔다 "
+        "(프로그램이 앞으로 3개월로 정한다). 반복이 아니면 freq='none', interval=1, count=0, until=''.\n"
         "취소 규칙:\n"
         "- '취소', '삭제', '지워', '빼줘', '안 가' 등 기존 일정을 없애려는 요청은 events가 아니라 cancellations에 담는다.\n"
         "- keyword는 제목에 들어 있을 법한 가장 짧은 핵심 단어 하나로 쓴다 (예: '내일 치과 예약 취소' → '치과').\n"
@@ -225,8 +254,11 @@ def system_prompt(existing: list[dict] | None = None) -> str:
         "- 시각을 말하면('내일 오전 1시 일정 삭제', '3시 회의 옮겨') time에 그 일정의 시작 시각을 쓴다. "
         "프로그램이 그 시각에 시작하는 일정만 고른다.\n"
         "변경 규칙:\n"
-        "- '옮겨', '미뤄', '당겨', '변경', '바꿔', '연기' 등 기존 일정의 날짜·시간을 바꾸는 요청은 moves에만 담는다. "
+        "- '옮겨', '미뤄', '당겨', '변경', '바꿔', '연기' 등 기존 일정의 날짜·시간·제목·장소를 바꾸는 요청은 moves에만 담는다. "
         "이때 cancellations와 events에는 아무것도 넣지 않는다.\n"
+        "- 제목을 바꾸면 new_title에 새 제목, 장소를 바꾸면 new_location에 새 장소를 쓴다 "
+        "('팀 회의 장소 2층 회의실로 바꿔' → new_location='2층 회의실'). 바꾸지 않는 것은 빈 문자열.\n"
+        "  날짜·시간은 그대로 두는 변경이면 new_date·new_time은 빈 문자열, shift는 0으로 둔다.\n"
         "- 원래 일정 기준의 상대 변경('다음날로', '하루 뒤로', '1시간 뒤로', '30분 당겨')은 shift_days/shift_minutes로,\n"
         "  절대 지정('목요일로', '3시로', '금요일 오후 2시로')은 new_date/new_time으로 쓴다. 쓰지 않는 값은 0 또는 빈 문자열.\n"
         "- 새 시각을 직접 계산해 넣지 말 것. 프로그램이 원래 일정의 실제 시간에서 계산한다."
@@ -262,10 +294,138 @@ def parse_request(text: str, notion: "Notion | None" = None) -> dict:
         # 날짜와 관계없이 최근에 만든 일정도 함께 ("방금 추가한 일정 삭제")
         seen = {ev["id"] for ev in existing}
         existing += [ev for ev in notion.recently_created() if ev["id"] not in seen]
+    out = ask_claude(system_prompt(existing), EVENT_SCHEMA, text)
+    for ev in out["events"]:
+        validate_event(ev)
+        if ev["repeat"]["until"]:
+            date.fromisoformat(ev["repeat"]["until"])
+    out["events"] = expand_repeats(out["events"])
+    for c in out["cancellations"] + out["moves"]:
+        if c["time"]:
+            datetime.strptime(c["time"], "%H:%M")
+        date.fromisoformat(c["date_from"])
+        date.fromisoformat(c["date_to"])
+    for m in out["moves"]:
+        if m["new_date"]:
+            date.fromisoformat(m["new_date"])
+        if m["new_time"]:
+            datetime.strptime(m["new_time"], "%H:%M")
+    return out
+
+
+ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "understood": {"type": "boolean", "description": "날짜·시각·장소 중 하나라도, 또는 '없음'·'종일'을 알아들었으면 true. 관계없는 말이면 false"},
+        "date": {"type": "string", "description": "말한 날짜 YYYY-MM-DD. 말하지 않았으면 빈 문자열"},
+        "all_day": {"type": "boolean", "description": "'종일', '하루 종일', '시간 없이'면 true"},
+        "time": {"type": "string", "description": "말한 시작 시각 HH:MM 24시간제. 말하지 않았거나 all_day면 빈 문자열"},
+        "duration_minutes": {"type": "integer", "description": "소요 시간(분). '3시부터 5시까지'=120, '2시간'=120. 말하지 않으면 60"},
+        "location": {"type": "string", "description": "말한 장소 그대로. 말하지 않았거나 '없음'이면 빈 문자열"},
+        "no_location": {"type": "boolean", "description": "장소가 없다·필요 없다·안 정해졌다고 했으면 true. 장소를 말하지 않았을 뿐이면 false"},
+    },
+    "required": ["understood", "date", "all_day", "time", "duration_minutes", "location", "no_location"],
+    "additionalProperties": False,
+}
+
+
+def parse_answer(text: str, title: str = "", asked: list[str] | None = None) -> dict:
+    """Read the user's answer to a question about an event (its date, time and/or place).
+    Returns {"date": "YYYY-MM-DD" | "", "all_day": bool, "time": "HH:MM" | "", "duration_minutes": int,
+    "location": str, "no_location": bool}; raises if the answer isn't about any of them.
+
+    일정에 대해 물은 것(날짜·시간·장소)에 대한 사용자의 답을 읽는다.
+    {"date", "all_day", "time", "duration_minutes", "location", "no_location"}을 돌려주고, 관계없는 말이면 오류를 낸다.
+    """
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    first, last = week_range(now.date())
+    names = {"date": "날짜", "time": "시간", "location": "장소"}
+    asked_text = ", ".join(names[a] for a in (asked or []) if a in names) or "날짜·시간·장소"
+    system = (
+        "너는 일정을 관리하는 비서다. 일정에 대해 사용자에게 물은 질문의 답을 읽는다.\n"
+        f"일정 제목: {title or '(없음)'} / 물은 것: {asked_text}\n"
+        f"현재 시각: {now.isoformat(timespec='minutes')} ({WEEKDAYS[now.weekday()]}요일), 타임존: {TIMEZONE}. "
+        f"한 주는 {WEEKDAYS[first.weekday()]}요일에 시작하고 이번 주는 {first.isoformat()} ~ {last.isoformat()}.\n"
+        "규칙:\n"
+        "- 답에 들어 있는 것만 채운다. 말하지 않은 칸은 빈 문자열(길이는 60).\n"
+        "- '내일', '다음 주 화요일' 같은 날짜는 현재 시각 기준 YYYY-MM-DD로 바꾼다.\n"
+        "- '오후 3시'=15:00, '아침 9시'=09:00, '저녁 7시 반'=19:30. '3시'처럼 오전/오후가 없으면 "
+        "일정 제목을 보고 더 그럴듯한 쪽으로 정한다 (시험·회의·수업·진료는 보통 낮 시간).\n"
+        "- '3시부터 5시까지', '2시간'처럼 길이를 말하면 duration_minutes에.\n"
+        "- '종일', '하루 종일'이면 all_day=true. 장소는 사용자가 쓴 표현 그대로.\n"
+        "- '없음', '안 정해짐', '모름'도 알아들은 답이다 (understood=true, 그 칸은 비움). 장소에 대해 그렇게 말했으면 no_location=true.\n"
+        "- 일정과 관계없는 말이면 understood=false."
+    )
+    out = ask_claude(system, ANSWER_SCHEMA, text)
+    if not out["understood"]:
+        raise RuntimeError(tr("answer.notUnderstood"))
+    if out["date"]:
+        date.fromisoformat(out["date"])
+    if out["all_day"]:
+        out["time"] = ""
+    elif out["time"]:
+        datetime.strptime(out["time"], "%H:%M")
+    minutes = out["duration_minutes"]
+    return {
+        "date": out["date"],
+        "all_day": bool(out["all_day"]),
+        "time": out["time"],
+        "duration_minutes": minutes if 0 < minutes <= 24 * 60 else 60,
+        "location": out["location"].strip()[:2000],
+        "no_location": bool(out["no_location"]) and not out["location"].strip(),
+    }
+
+
+def apply_answer(ev: dict, ans: dict, own: bool = True) -> None:
+    """Apply a parse_answer() result to an event to add, and update its "missing" list.
+    The date is only applied to the event itself (own), not to other occurrences of a repeating event.
+    Each question stays until it's answered, so answering only the time still leaves the date/place
+    to ask; the place question also ends when the user says there's none.
+
+    parse_answer() 결과를 추가할 일정에 적용하고 "missing"을 고친다.
+    날짜는 그 일정에만(own) 적용하고 반복 일정의 다른 일정에는 적용하지 않는다.
+    질문은 답할 때까지 남는다: 시간만 답하면 날짜·장소는 계속 묻는다. 장소는 "없음"이라고 해도 끝난다.
+    """
+    missing = list(ev.get("missing", []))
+    tz = ZoneInfo(TIMEZONE)
+    if own and ans["date"]:
+        old = local_date(ev["start"])
+        shift = date.fromisoformat(ans["date"]) - old
+        if ev["all_day"]:
+            ev["start"] = ans["date"]
+            ev["end"] = (date.fromisoformat(ev["end"][:10]) + shift).isoformat() if ev["end"] else ""
+        else:
+            # Same wall-clock time on the new day / 새 날짜의 같은 시각
+            st = datetime.fromisoformat(ev["start"]).astimezone(tz)
+            new_st = datetime(*(local_date(ev["start"]) + shift).timetuple()[:3], st.hour, st.minute, tzinfo=tz)
+            length = datetime.fromisoformat(ev["end"]) - datetime.fromisoformat(ev["start"]) if ev["end"] else None
+            ev["start"] = new_st.isoformat()
+            ev["end"] = (new_st + length).isoformat() if length else ""
+        missing = [m for m in missing if m != "date"]
+    day = local_date(ev["start"]).isoformat()
+    if ans["all_day"]:
+        ev.update(all_day=True, start=day, end="")
+        missing = [m for m in missing if m != "time"]
+    elif ans["time"]:
+        ev.update(time_on(day, ans))
+        ev["ampm_unclear"] = False
+        missing = [m for m in missing if m != "time"]
+    if ans["location"]:
+        ev["location"] = ans["location"]
+    if ans["location"] or ans.get("no_location"):
+        missing = [m for m in missing if m != "location"]
+    ev["missing"] = missing
+
+
+def ask_claude(system: str, schema: dict, text: str) -> dict:
+    """Run `claude -p` with a system prompt and a JSON schema, and return the structured output.
+
+    시스템 프롬프트와 JSON 스키마로 `claude -p`를 실행해 구조화된 결과를 돌려준다.
+    """
     cmd = [
         find_claude(), "-p",
-        "--system-prompt", system_prompt(existing),
-        "--json-schema", json.dumps(EVENT_SCHEMA, ensure_ascii=False),
+        "--system-prompt", system,
+        "--json-schema", json.dumps(schema, ensure_ascii=False),
         "--output-format", "json",
         # Text parsing only, no file/command tools
         # 파일/명령 도구 없이 텍스트 해석만
@@ -305,21 +465,7 @@ def parse_request(text: str, notion: "Notion | None" = None) -> dict:
         if "login" in msg.lower() or result.get("api_error_status") == 401:
             msg += "\n→ " + tr("claude.loginHint")
         raise RuntimeError(tr("claude.error", detail=msg))
-
-    out = result["structured_output"]
-    for ev in out["events"]:
-        validate_event(ev)
-    for c in out["cancellations"] + out["moves"]:
-        if c["time"]:
-            datetime.strptime(c["time"], "%H:%M")
-        date.fromisoformat(c["date_from"])
-        date.fromisoformat(c["date_to"])
-    for m in out["moves"]:
-        if m["new_date"]:
-            date.fromisoformat(m["new_date"])
-        if m["new_time"]:
-            datetime.strptime(m["new_time"], "%H:%M")
-    return out
+    return result["structured_output"]
 
 
 def validate_event(ev: dict) -> None:
@@ -339,6 +485,87 @@ def validate_event(ev: dict) -> None:
             # 오프셋이 빠졌으면 설정된 타임존을 붙인다
             if dt.tzinfo is None:
                 ev[key] = dt.replace(tzinfo=ZoneInfo(TIMEZONE)).isoformat()
+
+
+# Repeating events: at most this many from one event, and 3 months when no end is given
+# 반복 일정: 일정 하나에서 최대 이만큼, 끝을 말하지 않으면 3개월
+MAX_REPEAT = 60
+DEFAULT_REPEAT_MONTHS = 3
+
+
+def _add_months(d: date, n: int) -> date | None:
+    """The same day n months later, or None if that month has no such day (e.g. the 31st).
+
+    n달 뒤의 같은 날. 그 달에 그날이 없으면(예: 31일) None.
+    """
+    y, m = divmod(d.month - 1 + n, 12)
+    try:
+        return d.replace(year=d.year + y, month=m + 1)
+    except ValueError:
+        return None
+
+
+def expand_repeats(events: list[dict]) -> list[dict]:
+    """Turn each repeating event into its occurrences (Notion's API has no repeating events).
+    Times keep the local wall clock, so a daylight saving change doesn't shift them.
+    Occurrences of one event share "series" (its index) and carry "series_n"/"series_total".
+
+    반복 일정을 하나하나의 일정으로 펼친다 (노션 API에는 반복 일정이 없다).
+    시각은 로컬 벽시계 기준이라 서머타임이 바뀌어도 밀리지 않는다.
+    같은 반복에서 나온 일정은 "series"(원래 순서)가 같고 "series_n"/"series_total"이 붙는다.
+    """
+    tz = ZoneInfo(TIMEZONE)
+    out: list[dict] = []
+    for index, ev in enumerate(events):
+        rep = ev.pop("repeat", None) or {}
+        freq = rep.get("freq", "none")
+        if freq not in ("daily", "weekly", "monthly"):
+            out.append(ev)
+            continue
+        interval = max(1, int(rep.get("interval") or 1))
+        count = max(0, int(rep.get("count") or 0))
+        first_day = local_date(ev["start"])
+        until = date.fromisoformat(rep["until"]) if rep.get("until") else None
+        if not count and not until:
+            until = _add_months(first_day, DEFAULT_REPEAT_MONTHS) or first_day + timedelta(days=91)
+        if ev["all_day"]:
+            length = date.fromisoformat(ev["end"][:10]) - first_day if ev["end"] else None
+            st_local = None
+        else:
+            st_local = datetime.fromisoformat(ev["start"]).astimezone(tz)
+            length = datetime.fromisoformat(ev["end"]) - datetime.fromisoformat(ev["start"]) if ev["end"] else None
+
+        days: list[date] = []
+        step = 0
+        limit = min(count or MAX_REPEAT, MAX_REPEAT)
+        # Monthly dates that don't exist (the 31st) are skipped / 없는 날(31일)은 건너뛴다
+        while len(days) < limit and step < MAX_REPEAT * 2:
+            if freq == "monthly":
+                d = _add_months(first_day, step * interval)
+            else:
+                d = first_day + timedelta(days=step * interval * (7 if freq == "weekly" else 1))
+            step += 1
+            if d is None:
+                continue
+            # The first one is always kept, even if Claude gave an end before it
+            # 첫 번째 일정은 Claude가 그보다 앞선 끝 날짜를 줘도 남긴다
+            if until and d > until and days:
+                break
+            days.append(d)
+
+        for n, d in enumerate(days, 1):
+            if st_local is None:
+                start = d.isoformat()
+                end = (d + length).isoformat() if length else ""
+            else:
+                s = datetime(d.year, d.month, d.day, st_local.hour, st_local.minute, tzinfo=tz)
+                start = s.isoformat()
+                end = (s + length).isoformat() if length else ""
+            item = {**ev, "start": start, "end": end}
+            if len(days) > 1:
+                item.update(series=index, series_n=n, series_total=len(days))
+            out.append(item)
+    return out
 
 
 class PageNotFound(RuntimeError):
@@ -362,10 +589,21 @@ class Notion:
         self.title_prop, self.date_prop, self.desc_prop, self.location_prop = self._detect_properties()
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
-        try:
-            r = self.session.request(method, f"{NOTION_API}{path}", timeout=30, **kwargs)
-        except requests.RequestException:
-            raise RuntimeError(tr("notion.network"))
+        # Notion allows about 3 requests a second; adding a repeating event can send dozens,
+        # so wait and retry when it answers 429 (rate limited).
+        # 노션은 초당 약 3번까지 허용한다. 반복 일정은 수십 번 보낼 수 있으니 429(한도 초과)면 기다렸다 다시 보낸다.
+        for attempt in range(5):
+            try:
+                r = self.session.request(method, f"{NOTION_API}{path}", timeout=30, **kwargs)
+            except requests.RequestException:
+                raise RuntimeError(tr("notion.network"))
+            if r.status_code != 429 or attempt == 4:
+                break
+            try:
+                wait = float(r.headers.get("Retry-After", ""))
+            except ValueError:
+                wait = 0
+            time.sleep(min(max(wait, 2 ** attempt * 0.5), 10))
         if r.status_code == 401:
             raise RuntimeError(tr("notion.badToken"))
         if r.status_code == 404 and path.startswith("/databases/"):
@@ -535,15 +773,19 @@ class Notion:
             page = self._request("PATCH", f"/pages/{page_id}", json={"archived": False})
         return page["url"]
 
-    def move_event(self, page_id: str, start: str, end: str) -> str:
-        """Change only the page's date (content and other properties stay as they are).
+    def update_event(self, page_id: str, start: str, end: str, title: str = "", location: str = "") -> str:
+        """Change the page's date, and its title/location when given (the page content stays as it is).
 
-        기존 페이지의 날짜만 바꾼다 (내용·다른 속성은 그대로).
+        기존 페이지의 날짜와, 주어지면 제목·장소를 바꾼다 (페이지 내용은 그대로).
         """
-        date_value = {"start": start, "end": end or None}
-        page = self._request(
-            "PATCH", f"/pages/{page_id}", json={"properties": {self.date_prop: {"date": date_value}}}
-        )
+        properties: dict = {self.date_prop: {"date": {"start": start, "end": end or None}}}
+        if title:
+            properties[self.title_prop] = {"title": [{"text": {"content": title[:2000]}}]}
+        if location:
+            if not self.location_prop:
+                raise RuntimeError(tr("db.noLocation"))
+            properties[self.location_prop] = {"rich_text": [{"text": {"content": location[:2000]}}]}
+        page = self._request("PATCH", f"/pages/{page_id}", json={"properties": properties})
         return page["url"]
 
 
@@ -717,19 +959,35 @@ def compute_move(ev: dict, mv: dict) -> dict:
 
 
 def resolve_moves(notion: Notion, moves: list[dict]) -> list[dict]:
-    """Find the original event for each reschedule condition and compute its new time.
+    """Find the original event for each change condition and compute its new time.
 
-    Returns: [{..condition, "exact", "matches": [event + "selected" + "new": {all_day, start, end}]}]
+    Returns: [{..condition, "exact", "matches": [event + "selected" + "new": {all_day, start, end, title, location}]}]
 
-    변경 조건마다 원래 일정을 찾아 새 시간을 계산한다.
+    변경 조건마다 원래 일정을 찾아 새 시간을 계산한다 (새 제목·장소도 함께).
     """
     resolved = []
     for mv in resolve_cancellations(notion, moves):
         for ev in mv["matches"]:
             ev["new"] = compute_move(ev, mv)
+            # New title/location, or empty to keep / 새 제목·장소, 비어 있으면 그대로
+            ev["new"]["title"] = mv.get("new_title", "").strip()
+            ev["new"]["location"] = mv.get("new_location", "").strip()
+            # Caught here, not halfway through applying / 반영 도중이 아니라 여기서 알린다
+            if ev["new"]["location"] and not notion.location_prop:
+                raise RuntimeError(tr("db.noLocation"))
             ev["ampm_unclear"] = bool(mv.get("ampm_unclear")) and not ev["new"]["all_day"]
         resolved.append(mv)
     return resolved
+
+
+def moved_event(ev: dict) -> dict:
+    """The event as it will be after the change (an empty new title/location keeps the old one).
+
+    변경한 뒤의 일정 (새 제목·장소가 비어 있으면 원래 값).
+    """
+    new = ev["new"]
+    return {**ev, "all_day": new["all_day"], "start": new["start"], "end": new["end"],
+            "title": new.get("title") or ev["title"], "location": new.get("location") or ev.get("location", "")}
 
 
 def set_ampm(ev: dict, pm: bool) -> dict:
@@ -742,6 +1000,42 @@ def set_ampm(ev: dict, pm: bool) -> dict:
     delta = timedelta(hours=st.hour % 12 + (12 if pm else 0) - st.hour)
     end = (datetime.fromisoformat(ev["end"]) + delta).isoformat() if ev["end"] else ""
     return {"start": (st + delta).isoformat(), "end": end}
+
+
+def time_on(day: str, when: dict) -> dict:
+    """{"all_day", "start", "end"} on `day` (YYYY-MM-DD) for a timed parse_answer() result.
+
+    parse_answer() 결과(시각)를 `day`(YYYY-MM-DD)에 적용한 {"all_day", "start", "end"}.
+    """
+    st = datetime.fromisoformat(f"{day}T{when['time']}:00").replace(tzinfo=ZoneInfo(TIMEZONE))
+    return {"all_day": False, "start": st.isoformat(), "end": (st + timedelta(minutes=when["duration_minutes"])).isoformat()}
+
+
+def question(missing: list[str]) -> str:
+    """The question for what's missing: '언제 할까요?', '어디서 할까요?', '언제, 어디서 할까요?' …
+
+    빠진 것에 맞춘 질문.
+    """
+    when = "언제" if "date" in missing else "몇 시에" if "time" in missing else ""
+    where = "어디서" if "location" in missing else ""
+    return ", ".join(x for x in (when, where) if x) + " 할까요?"
+
+
+def ask_missing(ev: dict) -> dict | None:
+    """Ask on the command line, in plain language, for what an event is missing (date, time, place).
+    Returns a parse_answer() result, or None if left empty (keep it as it is).
+
+    일정에 빠진 것(날짜·시간·장소)을 명령줄에서 자연어로 묻는다.
+    parse_answer() 결과를 돌려주고, 비우면 None(그대로 둠).
+    """
+    while True:
+        answer = input(f"   💬 '{ev['title']}' {question(ev['missing'])} (예: 다음 주 화요일 오후 3시, 강남역 · 장소가 없으면 '없음' · 비우면 그대로) ").strip()
+        if not answer:
+            return None
+        try:
+            return parse_answer(answer, ev["title"], ev["missing"])
+        except (RuntimeError, ValueError) as e:
+            print(f"   ❓ {e}")
 
 
 def ask_ampm(ev: dict) -> dict:
@@ -769,9 +1063,18 @@ def format_event(ev: dict) -> str:
         return datetime.fromisoformat(v).strftime("%Y-%m-%d %H:%M")
 
     when = fmt(ev["start"]) + (f" ~ {fmt(ev['end'])}" if ev["end"] else "")
-    if ev["all_day"]:
+    missing = ev.get("missing", [])
+    if "date" in missing:
+        # The date is a placeholder until answered / 답하기 전 날짜는 임시 값
+        time = "시간 미정" if "time" in missing else "종일" if ev["all_day"] else when.split(" ", 1)[1].replace(fmt(ev["start"])[:11], "")
+        when = f"날짜 미정 · {time}"
+    elif "time" in missing:
+        when = f"{ev['start'][:10]} · 시간 미정"
+    elif ev["all_day"]:
         when += " (종일)"
     line = f"  • {ev['title']}  |  {when}"
+    if ev.get("series_total"):
+        line += f"  (반복 {ev['series_n']}/{ev['series_total']})"
     if ev.get("location"):
         line += f"\n      📍 {ev['location']}"
     if ev["description"]:
@@ -789,10 +1092,41 @@ def handle(text: str, notion: Notion | None, assume_yes: bool) -> None:
 
     if events:
         print(f"\n📅 추가할 일정 {len(events)}개:")
+        # AM/PM is asked once per repeating event and used for all its occurrences
+        # 반복 일정은 오전/오후를 한 번만 묻고 모든 일정에 쓴다
+        picked: dict[int, bool] = {}
+        # What an event is missing (date, time, place) is also asked once per repeating event
+        # 일정에 빠진 것(날짜·시간·장소)도 반복 일정이면 한 번만 묻는다
+        answers: dict[int, dict | None] = {}
         for ev in events:
             print(format_event(ev))
+            if ev.get("missing") and not assume_yes:
+                series = ev.get("series")
+                if series is not None and series in answers:
+                    ans = answers[series]
+                    if ans:
+                        apply_answer(ev, ans, own=False)
+                else:
+                    # Keep asking while the date or time is still unknown / 날짜·시간을 아직 모르면 다시 묻는다
+                    ans = None
+                    while ev["missing"]:
+                        got = ask_missing(ev)
+                        if not got:
+                            break
+                        apply_answer(ev, got)
+                        ans = got
+                    if series is not None:
+                        answers[series] = ans
+                if ans:
+                    print("   →" + format_event(ev).strip().lstrip("•"))
             if ev.get("ampm_unclear") and not ev["all_day"] and not assume_yes:
-                ev.update(ask_ampm(ev))
+                series = ev.get("series")
+                if series is not None and series in picked:
+                    ev.update(set_ampm(ev, picked[series]))
+                else:
+                    ev.update(ask_ampm(ev))
+                    if series is not None:
+                        picked[series] = datetime.fromisoformat(ev["start"]).hour >= 12
                 print("   →" + format_event(ev).strip().lstrip("•"))
         # Skip events that already exist (same title, same start); warn about overlaps
         # 이미 있는 일정(같은 제목, 같은 시작)은 건너뛰고, 시간이 겹치면 알린다
@@ -832,18 +1166,21 @@ def handle(text: str, notion: Notion | None, assume_yes: bool) -> None:
             for m in moves:
                 print(f"  • '{m['keyword']}' ({m['date_from']}~{m['date_to']}) → "
                       f"날짜 {m['new_date'] or '-'}, 시각 {m['new_time'] or '-'}, "
-                      f"{m['shift_days']}일 {m['shift_minutes']}분 이동")
+                      f"{m['shift_days']}일 {m['shift_minutes']}분 이동, "
+                      f"제목 {m['new_title'] or '-'}, 장소 {m['new_location'] or '-'}")
         else:
             for m in resolve_moves(notion, moves):
                 if not m["exact"]:
                     print(f"\n❓ '{m['keyword']}' ({m['date_from']} ~ {m['date_to']})에 맞는 일정이 없습니다.")
                     continue
-                print("\n🔁 옮길 일정:")
+                print("\n🔁 변경할 일정:")
                 for ev in m["matches"]:
-                    print(f"  • {describe_event(ev)}  →  {describe_event({**ev, **ev['new']})}")
+                    print(f"  • {describe_event(ev)}  →  {describe_event(moved_event(ev))}")
+                    if ev["new"]["location"]:
+                        print(f"      📍 {ev['location'] or '-'}  →  {ev['new']['location']}")
                     if ev.get("ampm_unclear") and not assume_yes:
                         ev["new"].update(ask_ampm({**ev["new"], "title": ev["title"]}))
-                        print(f"    →  {describe_event({**ev, **ev['new']})}")
+                        print(f"    →  {describe_event(moved_event(ev))}")
                 to_move += m["matches"]
 
     if notion is None:
@@ -857,8 +1194,9 @@ def handle(text: str, notion: Notion | None, assume_yes: bool) -> None:
             print("취소했습니다.")
             return
     for ev in to_move:
-        notion.move_event(ev["id"], ev["new"]["start"], ev["new"]["end"])
-        print(f"🔁 변경됨: {describe_event({**ev, **ev['new']})}")
+        new = ev["new"]
+        notion.update_event(ev["id"], new["start"], new["end"], new["title"], new["location"])
+        print(f"🔁 변경됨: {describe_event(moved_event(ev))}")
     for ev in to_delete:
         notion.delete_event(ev["id"])
         print(f"🗑  삭제됨: {ev['title']}")
