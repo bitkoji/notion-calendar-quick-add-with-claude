@@ -4,7 +4,8 @@
   "version": "1.0.2",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
-  "permissions": ["nativeMessaging"],
+  "permissions": ["nativeMessaging", "contextMenus", "storage"],
+  "background": { "service_worker": "background.js" },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "action": {
     "default_popup": "popup.html",
