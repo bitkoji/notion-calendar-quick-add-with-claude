@@ -10,8 +10,14 @@ Note: stdout is reserved for the protocol, so never use print().
 Requests / 요청:
   {"action": "ping"}                     → check setup / 설정 상태 확인
   {"action": "parse", "text": "..."}     → {"events": [...], "cancellations": [{..., "matches": [...]}]}
-  {"action": "apply", "add": [...], "delete": [{"id", "title"}]}
-                                         → {"added": [{"id", "title", "url"}], "deleted": [{"id", "title"}]}
+  {"action": "apply", "add": [...], "delete": [{"id", "title"}], "move": [{"id", "title", "new": {...}}]}
+                                         → {"added": [{"id", "title", "url"}], "deleted": [{"id", "title"}],
+                                            "moved": [{"title", "url", "when"}]}  (in request order / 요청 순서대로)
+                                         "new" may change the title/location too / "new"는 제목·장소도 바꿀 수 있다
+  {"action": "answer", "text": "...", "title"?, "asked"?: ["date", "time", "location"]}
+                                         → {"date", "all_day", "time", "duration_minutes", "location", "no_location", "nearby"?}
+                                         the answer to a question about an event; "nearby" when a date was given
+                                         일정에 대해 물은 것의 답. 날짜를 말했으면 그날의 기존 일정 "nearby"도
   {"action": "week", "offset"?: n}       → {"offset", "from", "to", "today", "events": [...]}  this week ± n weeks / 이번 주 ± n주 (WEEK_START)
   {"action": "restore", "id": "..."}     → {"url"} or {"gone": true} if permanently deleted / 완전히 삭제됐으면 gone
   {"action": "get_settings"}             → {"settings": {...}, "token_set", "claude": {...}}  (never sends any part of the token / 토큰은 일부도 보내지 않음)
@@ -177,10 +183,12 @@ def handle(msg: dict) -> dict:
         notion = notion_client()
         moved = []
         for ev in to_move:
-            new = ev["new"]
+            new = {"title": "", "location": "", **ev["new"]}
             notion_cal.validate_event({**new, "title": ev.get("title", "")})
-            url = notion.move_event(ev["id"], new["start"], new["end"])
-            moved.append({"title": ev.get("title", ""), "url": url, "when": notion_cal.describe_event({**ev, **new})})
+            title, location = str(new["title"]).strip(), str(new["location"]).strip()
+            url = notion.update_event(ev["id"], new["start"], new["end"], title, location)
+            after = notion_cal.moved_event({**ev, "new": new})
+            moved.append({"title": after["title"], "url": url, "when": notion_cal.describe_event(after)})
         deleted = []
         for ev in to_delete:
             notion.delete_event(ev["id"])
@@ -190,6 +198,17 @@ def handle(msg: dict) -> dict:
             notion_cal.validate_event(ev)
             added.append({"title": ev["title"], **notion.add_event(ev)})
         return {"ok": True, "added": added, "deleted": deleted, "moved": moved}
+    if action == "answer":
+        text = str(msg.get("text", "")).strip()[:300]
+        if not text:
+            raise RuntimeError(tr("answer.notUnderstood"))
+        asked = [a for a in (msg.get("asked") or []) if a in ("date", "time", "location")]
+        ans = notion_cal.parse_answer(text, str(msg.get("title", ""))[:200], asked)
+        # Existing events on the new date, so the popup can check duplicates and overlaps again
+        # 새 날짜의 기존 일정 (팝업이 중복·겹침을 다시 확인하도록)
+        if ans["date"]:
+            ans["nearby"] = notion_cal.attach_nearby(notion_client(), [{"start": ans["date"], "end": ""}])[0]["nearby"]
+        return {"ok": True, **ans}
     if action == "week":
         # A week (from the configured first day) in the local timezone, plus events from the week
         # before that run into it. "offset" moves it by whole weeks (-1 = last week, 1 = next week).
