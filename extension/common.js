@@ -19,6 +19,7 @@ const ICON_PATHS = {
   chevron: "M9.3 6.3 7.9 7.7l4.3 4.3-4.3 4.3 1.4 1.4 5.7-5.7-5.7-5.7Z",
   dot: "M12 6.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z",
   done: "M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6 11-11-1.4-1.4-9.6 9.6Z",
+  repeat: "M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z",
   close: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12Z",
   eye: "M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5Zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z",
   eyeOff: "M3.3 2 2 3.3l3.1 3.1C3.4 7.8 2.2 9.8 1.5 12c1.2 2.7 5 7 10.5 7 1.8 0 3.4-.5 4.8-1.2l3.9 3.9 1.3-1.3L3.3 2ZM12 16.5A4.5 4.5 0 0 1 7.5 12c0-.8.2-1.5.5-2.1l1.5 1.5a2.5 2.5 0 0 0 3.1 3.1l1.5 1.5c-.6.3-1.3.5-2.1.5ZM12 5c-1.3 0-2.6.2-3.7.7l2 2c.5-.1 1.1-.2 1.7-.2a4.5 4.5 0 0 1 4.5 4.5c0 .6-.1 1.2-.3 1.7l3.1 3.1c1.4-1.2 2.5-2.7 3.2-4.3C21.3 9.3 17.5 5 12 5Z",
@@ -189,6 +190,18 @@ function isGithubRepoUrl(url) {
   } catch {
     return false;
   }
+}
+
+// ---------- Right-click menu / 우클릭 메뉴 ----------
+// Shared with background.js (keep the values the same there).
+// background.js 와 같은 값을 쓴다 (바꾸면 그쪽도 같이).
+const MENU_ID = "add-selection";
+const PENDING_TEXT_KEY = "pendingText";
+
+/** Show the menu item in the extension's language (background.js can only use the browser's)
+ *  메뉴 이름을 확장 화면 언어로 맞춘다 (background.js 는 브라우저 언어만 알 수 있다) */
+function syncMenuTitle() {
+  try { chrome.contextMenus.update(MENU_ID, { title: t("menu.addSelection") }).catch(() => {}); } catch {}
 }
 
 function bannerError(el, e) {
