@@ -1,6 +1,9 @@
 // Uses t from i18n.js and callHost · icon · escapeHtml · showBanner · formatWhen from common.js
 // i18n.js 의 t · common.js 의 callHost · icon · escapeHtml · showBanner · formatWhen 를 사용한다
 const DRAFT_KEY = "draft";
+// Opened as a window by background.js because the toolbar popup couldn't open
+// 툴바 팝업을 열 수 없어 background.js 가 창으로 연 경우
+const IN_WINDOW = new URLSearchParams(location.search).has("window");
 
 const $ = (id) => document.getElementById(id);
 const form = $("form");
@@ -70,6 +73,10 @@ function dayLabel(iso) {
   return getLang() === "ko" ? `${mo}/${d}(${wd})` : `${wd} ${mo}/${d}`;
 }
 
+/** AM/PM is known, and the date and time aren't missing (see "Asking for what's missing")
+ *  오전/오후를 알고, 날짜·시간이 빠지지 않았는지 ("빠진 것 묻기" 참고) */
+const decided = (item) => item.ampm !== null && !item.missing.has("date") && !item.missing.has("time");
+
 /** The times an item shows and changes: the event itself, or the new time for a move
  *  항목이 보여 주고 바꾸는 시간: 일정 자체, 옮기기면 새 시간 */
 const timesOf = (item) => (item.kind === "move" ? item.ev.new : item.ev);
@@ -86,7 +93,7 @@ const normTitle = (s) => String(s).replace(/\s+/g, "").toLowerCase();
 /** An event to add that already exists (same title, same start). Unknown until AM/PM is chosen.
  *  이미 있는 일정인지 (같은 제목, 같은 시작). 오전/오후를 고르기 전에는 판단하지 않는다 */
 const isDuplicate = (item) =>
-  item.kind === "add" && item.ampm !== null &&
+  item.kind === "add" && decided(item) &&
   (item.ev.nearby || []).some((x) => normTitle(x.title) === normTitle(item.ev.title) && sameStart(x, item.ev));
 
 /** Start/end in ms of a timed event; with no end it's taken as 1 hour / 시간 일정의 시작·끝 (끝이 없으면 1시간) */
@@ -99,7 +106,7 @@ function spanOf(ev) {
  *  추가할 일정과 시간이 겹치는 기존 시간 일정 (중복과 종일 일정은 제외) */
 function overlapping(item) {
   const { ev } = item;
-  if (item.kind !== "add" || item.ampm === null || ev.all_day) return [];
+  if (item.kind !== "add" || !decided(item) || ev.all_day) return [];
   const [s, e] = spanOf(ev);
   return (ev.nearby || []).filter((x) => {
     if (x.all_day || (normTitle(x.title) === normTitle(ev.title) && sameStart(x, ev))) return false;
@@ -123,19 +130,52 @@ function overlapLabel(x, ev) {
 function whenHtml(item) {
   const { kind, ev } = item;
   const target = timesOf(item);
-  const shown = item.ampm === null
-    ? `${dayLabel(target.start)} · ${t("popup.ampm.pick")}`
+  // The time without the date, for an event whose date isn't known yet / 날짜를 아직 모르는 일정의 시간만
+  const timeOnly = (x) => (x.all_day ? t("date.allDay") : hhmm(new Date(x.start)) + (x.end ? ` ~ ${hhmm(new Date(x.end))}` : ""));
+  const shown = item.missing.has("date")
+      ? [t("popup.ask.noDate"), item.missing.has("time") ? t("popup.ask.noTime") : timeOnly(target)].join(" · ")
+    : item.missing.has("time") ? `${dayLabel(target.start)} · ${t("popup.ask.noTime")}`
+    : item.ampm === null ? `${dayLabel(target.start)} · ${t("popup.ampm.pick")}`
     : formatWhen(target);
   const warn = (text) => `<div class="meta warn">${icon("info")}<span>${escapeHtml(text)}</span></div>`;
   const others = overlapping(item);
   const notes =
     (isDuplicate(item) ? warn(t("popup.duplicate")) : "") +
     (others.length ? warn(t("popup.overlap", { titles: others.map((x) => overlapLabel(x, ev)).join(", ") })) : "");
-  return kind === "move"
-    ? `<div class="meta">${icon("clock")}<s>${escapeHtml(formatWhen(ev))}</s></div>
-       <div class="meta new">${icon("arrow")}${escapeHtml(shown)}</div>`
-    : `<div class="meta">${icon("clock")}${escapeHtml(shown)}</div>${notes}`;
+  if (kind !== "move") return `<div class="meta">${icon("clock")}${escapeHtml(shown)}</div>${notes}`;
+  // A change that keeps the time (title or location only) shows the time once
+  // 시간은 그대로 두는 변경(제목·장소만)은 시간을 한 번만 보여 준다
+  // Compared as moments: Notion writes "10:00:00.000+09:00", the host "10:00:00+09:00"
+  // 시각 값으로 비교한다: 노션은 "10:00:00.000+09:00", 호스트는 "10:00:00+09:00" 형식
+  const sameEnd = ev.all_day
+    ? (ev.end || "").slice(0, 10) === (target.end || "").slice(0, 10)
+    : (Date.parse(ev.end) || 0) === (Date.parse(target.end) || 0);
+  const sameTime = item.ampm !== null && !!ev.all_day === !!target.all_day && sameStart(ev, target) && sameEnd;
+  return sameTime
+    ? `<div class="meta">${icon("clock")}${escapeHtml(formatWhen(ev))}</div>`
+    : `<div class="meta">${icon("clock")}<s>${escapeHtml(formatWhen(ev))}</s></div>
+       <div class="meta new">${icon("arrow")}${escapeHtml(shown)}</div>`;
 }
+
+/** Title (old → new for a changed title) / 제목 (제목을 바꾸면 이전 → 새 제목) */
+function titleHtml(kind, ev) {
+  const next = kind === "move" && ev.new.title && ev.new.title !== ev.title ? ev.new.title : "";
+  return next
+    ? `<span class="title"><s>${escapeHtml(ev.title)}</s></span>${icon("arrow")}<span class="title new">${escapeHtml(next)}</span>`
+    : `<span class="title">${escapeHtml(ev.title)}</span>`;
+}
+
+/** Location (old → new for a changed location) / 장소 (장소를 바꾸면 이전 → 새 장소) */
+function locationHtml(kind, ev) {
+  const next = kind === "move" && ev.new.location && ev.new.location !== ev.location ? ev.new.location : "";
+  if (!next) return ev.location ? `<div class="meta">${icon("pin")}${escapeHtml(ev.location)}</div>` : "";
+  return (ev.location ? `<div class="meta">${icon("pin")}<s>${escapeHtml(ev.location)}</s></div>` : "") +
+    `<div class="meta new">${icon(ev.location ? "arrow" : "pin")}${escapeHtml(next)}</div>`;
+}
+
+/** "Repeats · 2 of 4" for an occurrence of a repeating event / 반복 일정의 몇 번째인지 */
+const repeatHtml = (ev) =>
+  ev.series_total ? `<div class="meta">${icon("repeat")}${escapeHtml(t("popup.repeat", { n: ev.series_n, total: ev.series_total }))}</div>` : "";
 
 function ampmHtml(item) {
   if (!item.orig) return "";
@@ -147,6 +187,137 @@ function ampmHtml(item) {
   return `<div class="ampm" role="group" aria-label="${escapeHtml(t("popup.ampm.pick"))}">${btn(false)}${btn(true)}</div>`;
 }
 
+/** Set AM ("am") or PM ("pm") on an item and update its times. The clicked item gets selected;
+ *  the other occurrences of a repeating event keep their checkbox, and duplicates get unchecked.
+ *  항목에 오전·오후를 정하고 시간을 바꾼다. 누른 항목은 선택하고, 같은 반복의 다른 일정은
+ *  체크 상태를 그대로 두되 이미 있는 일정이면 체크를 푼다. */
+function pickAmpm(item, value, clicked) {
+  const { li } = item;
+  const box = li.querySelector("input[type=checkbox]");
+  item.ampm = value;
+  Object.assign(timesOf(item), withAmpm(item.orig, value === "pm"));
+  li.querySelector(".when").innerHTML = whenHtml(item);
+  li.querySelectorAll("button[data-ampm]").forEach((b) => {
+    const on = b.dataset.ampm === value;
+    b.classList.toggle("selected", on);
+    b.setAttribute("aria-pressed", on);
+  });
+  if (clicked) box.checked = true;
+  if (isDuplicate(item)) box.checked = false;
+  li.classList.toggle("unchecked", !box.checked);
+  li.classList.remove("attention");
+}
+
+// ---------- Asking for what's missing / 빠진 것 묻기 ----------
+// Like a secretary, Claude marks what an event to add is missing: its date, its time (for events that
+// usually have one) or its place (for events you usually go somewhere for). The popup asks
+// "When?", "Where?", "When and where?" … with one text box, and Claude reads the answer
+// ("next Tuesday 3 PM, Gangnam Station") when [OK] is pressed. Each question stays until it's answered:
+// answering only the time keeps asking for the date and place. The date and time must be answered
+// before applying; the place can be left out, or answered "none". The box stays, so later
+// answers can change the date, time or place again. Times are written without an offset, so the host
+// applies the configured timezone.
+// 비서처럼 Claude가 추가할 일정에 빠진 것을 표시한다: 날짜, (보통 시각이 있는 일정이면) 시간,
+// (보통 가는 곳이 있는 일정이면) 장소. 팝업은 "언제 할까요?", "어디서 할까요?", "언제, 어디서 할까요?" 처럼
+// 글 상자 하나로 묻고, [확인]을 누르면 Claude가 답("다음 주 화요일 오후 3시, 강남역")을 읽는다.
+// 질문은 답할 때까지 남는다: 시간만 답하면 날짜·장소를 계속 묻는다.
+// 날짜와 시간은 답해야 반영할 수 있고, 장소는 비워 두거나 "없음"이라고 답하면 된다.
+// 상자는 남아 있어 나중에 날짜·시간·장소를 다시 바꿀 수 있다. 시각은 오프셋 없이 쓰므로 호스트가 설정한 타임존을 붙인다.
+
+/** The question for what's still missing / 아직 빠진 것에 맞춘 질문 */
+function askQuestion(missing) {
+  const when = missing.has("date") ? "when" : missing.has("time") ? "time" : "";
+  const where = missing.has("location");
+  if (!when && !where) return t("popup.ask.more");
+  if (!when) return t("popup.ask.where");
+  return t(`popup.ask.${when}${where ? "Where" : ""}`);
+}
+
+/** Example answer for the text box / 글 상자의 예시 답 */
+function askPlaceholder(missing) {
+  if (!missing.size) return t("popup.ask.exMore");
+  const when = ["date", "time"].filter((m) => missing.has(m)).map((m) => t(`popup.ask.ex.${m}`)).join(" ");
+  const text = [when, missing.has("location") ? t("popup.ask.ex.location") : ""].filter(Boolean).join(", ");
+  const example = t("popup.ask.ex", { text });
+  // Asked only for the place: say how to answer that there's none / 장소만 물을 때는 "없음"으로 답하는 법도
+  return missing.size === 1 && missing.has("location") ? t("popup.ask.exNone", { text: example }) : example;
+}
+
+function askHtml(item) {
+  if (!item.ask) return "";
+  return `<div class="ask">` +
+    `<div class="ask-q">${escapeHtml(askQuestion(item.missing))}</div>` +
+    `<form class="ask-form">` +
+    `<input type="text" class="ask-text" maxlength="200" placeholder="${escapeHtml(askPlaceholder(item.missing))}" aria-label="${escapeHtml(askQuestion(item.missing))}">` +
+    `<button type="submit" class="chip">${escapeHtml(t("popup.ask.ok"))}</button></form>` +
+    `<div class="ask-error"></div></div>`;
+}
+
+const daysBetween = (a, b) => Math.round((Date.parse(b.slice(0, 10)) - Date.parse(a.slice(0, 10))) / DAY_MS);
+
+/** Apply an answer { date, all_day, time, duration_minutes, location, no_location, nearby? } to an item to add.
+ *  The date only goes to the item itself (own), not to other occurrences of a repeating event.
+ *  답 { date, all_day, time, duration_minutes, location, nearby? } 을 추가할 항목에 적용한다.
+ *  날짜는 그 항목에만(own) 적용하고 반복 일정의 다른 일정에는 적용하지 않는다. */
+function applyAnswer(item, a, own) {
+  const { ev, missing } = item;
+  if (own && a.date) {
+    const diff = daysBetween(ev.start, a.date);
+    if (ev.all_day) {
+      ev.start = a.date;
+      ev.end = ev.end ? addDays(ev.end.slice(0, 10), diff) : "";
+    } else {
+      ev.start = shiftIso(ev.start, diff * 24);
+      ev.end = ev.end ? shiftIso(ev.end, diff * 24) : "";
+    }
+    if (a.nearby) ev.nearby = a.nearby;
+    missing.delete("date");
+  }
+  const day = ev.start.slice(0, 10);
+  if (a.all_day) {
+    Object.assign(ev, { all_day: true, start: day, end: "" });
+    missing.delete("time");
+  } else if (a.time) {
+    const start = `${day}T${a.time}:00`;
+    Object.assign(ev, { all_day: false, start, end: shiftIso(start, a.duration_minutes / 60) });
+    missing.delete("time");
+    // A time said in full needs no AM/PM choice / 시각을 답했으면 오전·오후를 고를 필요 없다
+    if (item.ampm === null || item.orig) {
+      Object.assign(item, { ampm: "fixed", orig: null });
+      const chips = item.li.querySelector(".ampm");
+      if (chips) chips.remove();
+    }
+  }
+  if (a.location) ev.location = a.location;
+  // The place question ends with a place, or with "none" / 장소 질문은 장소나 "없음"으로 끝난다
+  if (a.location || a.no_location) missing.delete("location");
+}
+
+/** Redraw an item after an answer; same checkbox rules as pickAmpm
+ *  답을 적용한 항목을 다시 그린다. 체크 규칙은 pickAmpm 과 같다 */
+function refreshAnswered(item, clicked) {
+  const { li, kind, ev, missing } = item;
+  const box = li.querySelector("input[type=checkbox]");
+  li.querySelector(".when").innerHTML = whenHtml(item);
+  li.querySelector(".loc").innerHTML = locationHtml(kind, ev);
+  li.querySelector(".ask-q").textContent = askQuestion(missing);
+  const text = li.querySelector(".ask-text");
+  text.placeholder = askPlaceholder(missing);
+  text.setAttribute("aria-label", askQuestion(missing));
+  li.querySelector(".ask-error").innerHTML = "";
+  if (clicked) box.checked = true;
+  if (isDuplicate(item)) box.checked = false;
+  li.classList.toggle("unchecked", !box.checked);
+  if (decided(item)) li.classList.remove("attention");
+}
+
+/** The item and, for a repeating event, its other occurrences that ask the same question
+ *  그 항목과, 반복 일정이면 같은 것을 묻는 다른 일정들 */
+const seriesOf = (item, has) =>
+  item.kind === "add" && item.ev.series !== undefined
+    ? [...items.values()].filter((x) => x.kind === "add" && has(x) && x.ev.series === item.ev.series)
+    : [item];
+
 function renderItem(kind, ev, checked) {
   const key = `k${items.size}`;
   const target = kind === "move" ? ev.new : ev;
@@ -154,34 +325,71 @@ function renderItem(kind, ev, checked) {
   // ampm: null = not chosen yet / orig: the times Claude guessed
   // ampm: null 이면 아직 안 고름 / orig: Claude가 추정한 시간
   const item = { kind, ev, ampm: unclear ? null : "fixed", orig: unclear ? { start: target.start, end: target.end } : null };
+  // missing: what to ask ("date" / "time" / "location") / ask: show the question box
+  // missing: 물어볼 것 / ask: 질문 상자를 보여 줄지
+  item.missing = new Set(kind === "add" ? (ev.missing || []).filter((m) => ["date", "time", "location"].includes(m)) : []);
+  item.ask = item.missing.size > 0;
   items.set(key, item);
   // An event that already exists starts unchecked / 이미 있는 일정은 선택 해제로 시작
   if (isDuplicate(item)) checked = false;
   const li = document.createElement("li");
+  item.li = li;
   li.className = `item ${kind}${checked ? "" : " unchecked"}`;
   li.innerHTML = `
     <input type="checkbox" data-key="${key}" ${checked ? "checked" : ""} aria-label="${escapeHtml(t("popup.select", { title: ev.title }))}">
     <div class="content">
-      <div class="title-row"><span class="tag ${kind}">${t(`popup.tag.${kind}`)}</span><span class="title">${escapeHtml(ev.title)}</span></div>
+      <div class="title-row"><span class="tag ${kind}">${t(`popup.tag.${kind}`)}</span>${titleHtml(kind, ev)}</div>
       <div class="when">${whenHtml(item)}</div>
       ${ampmHtml(item)}
-      ${ev.location ? `<div class="meta">${icon("pin")}${escapeHtml(ev.location)}</div>` : ""}
+      ${askHtml(item)}
+      ${repeatHtml(ev)}
+      <div class="loc">${locationHtml(kind, ev)}</div>
       ${ev.description ? `<div class="meta">${escapeHtml(ev.description)}</div>` : ""}
     </div>`;
-  const box = li.querySelector("input");
+  const box = li.querySelector("input[type=checkbox]");
+  const askForm = li.querySelector(".ask-form");
+  // [OK] (or Enter) in the question box: Claude reads the answer, and it's used for this event
+  // (time and place also for the rest of a repeating one). Answering again changes it again.
+  // 질문 상자의 [확인](또는 Enter): Claude가 답을 읽고 이 일정에 쓴다
+  // (시간·장소는 반복 일정의 나머지에도). 다시 답하면 다시 바뀐다.
+  if (askForm) {
+    askForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const textEl = askForm.querySelector(".ask-text");
+      const text = textEl.value.trim();
+      const btn = askForm.querySelector("button");
+      const errorEl = li.querySelector(".ask-error");
+      if (!text || btn.disabled) return textEl.focus();
+      btn.disabled = true;
+      btn.textContent = t("popup.ask.reading");
+      errorEl.innerHTML = "";
+      try {
+        const a = await callHost({ action: "answer", text, title: ev.title, asked: [...item.missing] });
+        seriesOf(item, (x) => x.ask).forEach((x) => {
+          applyAnswer(x, a, x === item);
+          refreshAnswered(x, x === item);
+          // With questions left, the box is emptied for the next answer; otherwise it shows the answer
+          // (on the other occurrences too) / 남은 질문이 있으면 다음 답을 위해 비우고, 없으면 답을 보여 준다
+          x.li.querySelector(".ask-text").value = x.missing.size ? "" : text;
+        });
+        if (item.missing.size) textEl.focus();
+        if (!groupsEl.querySelector(".item.attention")) setStatus("", "");
+      } catch (err) {
+        errorEl.innerHTML = `<div class="meta error">${icon("error")}${escapeHtml(err instanceof SetupError ? t("common.setupShort") : err.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = t("popup.ask.ok");
+      }
+    });
+  }
   li.addEventListener("click", (e) => {
+    // Clicks in the question box don't toggle the checkbox / 질문 상자를 누를 때는 체크를 바꾸지 않는다
+    if (e.target.closest(".ask")) return;
     const chip = e.target.closest("button[data-ampm]");
     if (chip) {
-      // Pick AM/PM: update the times and select the event / 오전·오후 선택: 시간을 바꾸고 일정을 선택
-      item.ampm = chip.dataset.ampm;
-      Object.assign(timesOf(item), withAmpm(item.orig, item.ampm === "pm"));
-      li.querySelector(".when").innerHTML = whenHtml(item);
-      li.querySelectorAll("button[data-ampm]").forEach((b) => {
-        b.classList.toggle("selected", b === chip);
-        b.setAttribute("aria-pressed", b === chip);
-      });
-      box.checked = true;
-      li.classList.remove("unchecked", "attention");
+      // Pick AM/PM. For a repeating event the choice applies to all its occurrences.
+      // 오전·오후 선택. 반복 일정이면 같은 반복의 모든 일정에 적용한다.
+      seriesOf(item, (x) => x.orig).forEach((x) => pickAmpm(x, chip.dataset.ampm, x === item));
       // Clear the "choose AM or PM" notice once nothing is left to choose
       // 고를 일정이 더 없으면 "오전/오후를 골라야" 안내를 지운다
       if (!groupsEl.querySelector(".item.attention")) setStatus("", "");
@@ -209,23 +417,25 @@ function addGroup(title, kind, list, note, checked) {
 
 /** Group of existing events found by a delete/move condition
  *  취소·변경 조건으로 찾은 기존 일정 묶음 */
-function addLookupGroup(c, kind) {
+function addLookupGroup(c, kind, fromPage) {
   const range = (c.date_from === c.date_to ? c.date_from : `${c.date_from} ~ ${c.date_to}`) + (c.time ? ` ${c.time}` : "");
   const label = c.keyword ? `'${c.keyword}'` : t("popup.allInRange");
   if (!c.matches.length) {
     addGroup(t(`popup.group.${kind}None`), kind, [], t("popup.noneNote", { range, label }));
   } else if (c.exact) {
-    addGroup(t(`popup.group.${kind}`), kind, c.matches);
+    // Text from a web page starts deletes/changes unchecked: the page, not the user, wrote it
+    // 웹페이지에서 가져온 글이면 삭제·변경은 체크를 풀어 둔다 (사용자가 아니라 페이지가 쓴 글이므로)
+    addGroup(t(`popup.group.${kind}`), kind, c.matches, null, fromPage ? false : undefined);
   } else {
     addGroup(t(`popup.group.${kind}Pick`), kind, c.matches, t("popup.pickNote", { range, label }), false);
   }
 }
 
-function renderPreview(events, cancellations, moves) {
+function renderPreview(events, cancellations, moves, fromPage) {
   items = new Map();
   groupsEl.innerHTML = "";
-  moves.forEach((m) => addLookupGroup(m, "move"));
-  cancellations.forEach((c) => addLookupGroup(c, "delete"));
+  moves.forEach((m) => addLookupGroup(m, "move", fromPage));
+  cancellations.forEach((c) => addLookupGroup(c, "delete", fromPage));
   if (events.length) addGroup(t("popup.group.add"), "add", events, null, true);
 
   const kinds = new Set([...items.values()].map((x) => x.kind));
@@ -425,7 +635,7 @@ async function trashAction(control) {
 }
 
 // ---------- Actions / 동작 ----------
-async function parse() {
+async function parse(fromPage = false) {
   const text = input.value.trim();
   if (!text) return input.focus();
   preview.hidden = true;
@@ -437,7 +647,7 @@ async function parse() {
       return;
     }
     setStatus("", "");
-    renderPreview(events, cancellations, moves);
+    renderPreview(events, cancellations, moves, fromPage);
   } catch (e) {
     showError(e);
   } finally {
@@ -446,13 +656,14 @@ async function parse() {
 }
 
 async function apply() {
-  const checked = [...groupsEl.querySelectorAll("input:checked")];
-  // Selected events whose AM/PM hasn't been chosen yet: point them out and stop
-  // 오전/오후를 아직 고르지 않은 선택 일정: 표시하고 멈춘다
-  const unclear = checked.filter((c) => items.get(c.dataset.key).ampm === null);
+  const checked = [...groupsEl.querySelectorAll("input[type=checkbox]:checked")];
+  // Selected events whose time or AM/PM hasn't been chosen yet: point them out and stop
+  // 시각이나 오전/오후를 아직 정하지 않은 선택 일정: 표시하고 멈춘다
+  const unclear = checked.filter((c) => !decided(items.get(c.dataset.key)));
   if (unclear.length) {
     unclear.forEach((c) => c.closest("li").classList.add("attention"));
-    return setStatus("info", escapeHtml(t("popup.ampm.needed")));
+    const notAnswered = unclear.some((c) => !decided({ ...items.get(c.dataset.key), ampm: "fixed" }));
+    return setStatus("info", escapeHtml(t(notAnswered ? "popup.ask.needed" : "popup.ampm.needed")));
   }
   const chosen = checked.map((c) => items.get(c.dataset.key));
   const add = chosen.filter((x) => x.kind === "add").map((x) => x.ev);
@@ -476,12 +687,13 @@ async function apply() {
       id: r.id, title: r.title, url: r.url, start: add[i].start, end: add[i].end || "", all_day: !!add[i].all_day, state: "added",
     }));
     addedEntries.forEach((x) => known.set(x.id, x));
-    // Re-format moved events in the UI language (the host's `when` is Korean-formatted)
-    // 변경 결과는 화면 언어로 다시 포맷한다 (호스트가 준 when 은 한국어 형식)
-    const movedEv = new Map(move.map((m) => [m.title, m]));
+    // Re-format changed events in the UI language (the host's `when` is Korean-formatted).
+    // The host keeps the request order and returns the title after the change.
+    // 변경 결과는 화면 언어로 다시 포맷한다 (호스트가 준 when 은 한국어 형식).
+    // 호스트는 요청 순서를 유지하고 바뀐 뒤의 제목을 돌려준다.
     const lines = [
-      ...moved.map((r) => {
-        const m = movedEv.get(r.title);
+      ...moved.map((r, i) => {
+        const m = move[i];
         return `<li>${icon("arrow")}${detailLinks(r.url, m ? `${formatWhen(m.new)} ${r.title}` : r.when)}</li>`;
       }),
       // Title + time, then [Undo] on the line below
@@ -538,8 +750,30 @@ document.addEventListener("click", (e) => {
   if (!isNotionUrl(a.dataset.url)) return;
   const id = new URL(a.dataset.url).pathname.replace(/-/g, "").match(/[0-9a-f]{32}$/i);
   const appUrl = id ? `notion://www.notion.so/${id[0]}` : a.dataset.url.replace(/^https?:\/\//, "notion://");
+  // In the fallback window (no toolbar popup) a new tab hands the link over instead of this window
+  // 팝업 대신 열린 창이면 이 창이 아니라 새 탭으로 넘긴다
+  if (IN_WINDOW) return void chrome.tabs.create({ url: appUrl });
   chrome.tabs.update({ url: appUrl }).catch(() => chrome.tabs.create({ url: appUrl }));
 });
+// ---------- Text sent from the right-click menu / 우클릭 메뉴로 보낸 글 ----------
+// background.js keeps the selected text in session storage and opens this popup;
+// it's put in the input and interpreted right away, so the preview comes up as usual.
+// background.js 가 고른 글을 세션 저장소에 두고 이 팝업을 연다.
+// 입력 칸에 넣고 바로 해석하므로 평소처럼 미리보기가 나온다.
+async function takeSelectedText() {
+  try {
+    const { [PENDING_TEXT_KEY]: text } = await chrome.storage.session.get(PENDING_TEXT_KEY);
+    if (!text) return;
+    await chrome.storage.session.remove(PENDING_TEXT_KEY);
+    // Not saved as the draft, so an unsent draft comes back next time
+    // 입력 중이던 내용(초안)은 덮어쓰지 않아 다음에 다시 열면 돌아온다
+    input.value = String(text);
+    parse(true);
+  } catch {}
+}
+takeSelectedText();
+syncMenuTitle();
+
 $("cancel").addEventListener("click", () => { preview.hidden = true; setStatus("", ""); input.focus(); });
 $("settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
 renderTrash();
@@ -587,6 +821,10 @@ function statusOf(ev, now = Date.now()) {
 const timeText = (ev) =>
   ev.all_day ? t("date.allDay") : hhmm(new Date(ev.start)) + (ev.end ? ` ~ ${hhmm(new Date(ev.end))}` : "");
 
+/** [Delete] for an event in the list or calendar view / 목록·캘린더 보기의 일정 [삭제] */
+const wkDelButton = (ev) =>
+  `<button type="button" class="wk-del" data-wkdel="${escapeHtml(ev.id)}" aria-label="${escapeHtml(`${t("popup.delete")}: ${ev.title}`)}">${escapeHtml(t("popup.delete"))}</button>`;
+
 const weekMark = (st) =>
   `<span class="wk-mark ${st}" title="${escapeHtml(t(`popup.week.${st}`))}">${icon(WEEK_MARK[st])}</span>`;
 
@@ -613,6 +851,7 @@ function renderWeekList(data) {
           `${weekMark(st)}<span class="wk-time">${escapeHtml(timeText(ev))}</span>` +
           `<span class="wk-title">${escapeHtml(ev.title)}</span>` +
           (st === "now" ? `<span class="tag now">${escapeHtml(t("popup.week.now"))}</span>` : "") +
+          wkDelButton(ev) +
           `</li>`;
       }).join("") || `<li class="wk-empty">${escapeHtml(t("popup.week.dayEmpty"))}</li>`;
       const today = d === data.today ? `<span class="tag today">${escapeHtml(t("popup.week.today"))}</span>` : "";
@@ -632,7 +871,8 @@ function renderWeekCalendar(data) {
       const st = statusOf(ev);
       const time = ev.all_day ? t("date.allDay") : hhmm(new Date(ev.start));
       return `<div class="wk-chip ${st}" data-url="${escapeHtml(ev.url)}" title="${escapeHtml(`${timeText(ev)} ${ev.title}`)}">` +
-        `<span class="wk-chip-time">${weekMark(st)}${escapeHtml(time)}</span><span class="wk-chip-title">${escapeHtml(ev.title)}</span></div>`;
+        `<span class="wk-chip-time">${weekMark(st)}${escapeHtml(time)}</span><span class="wk-chip-title">${escapeHtml(ev.title)}</span>` +
+        wkDelButton(ev) + `</div>`;
     }).join("");
     const cls = d === data.today ? " today" : d < data.today ? " past" : "";
     return `<div class="wk-col${cls}"><div class="wk-col-head"><span>${escapeHtml(wd)}</span><b>${dd}</b></div>${chips}</div>`;
@@ -640,6 +880,8 @@ function renderWeekCalendar(data) {
 }
 
 let weekSeq = 0;
+// Events of the week being shown, by ID (for their [Delete]) / 보고 있는 주의 일정 ([삭제]용)
+let weekEvents = new Map();
 // Weeks away from this week (-1 = last week). Starts at this week every time the popup opens.
 // 이번 주에서 몇 주 떨어졌는지 (-1 = 지난 주). 팝업을 열 때마다 이번 주부터 시작한다.
 let weekOffset = 0;
@@ -674,6 +916,7 @@ async function loadWeek() {
     const data = await callHost({ action: "week", offset: weekOffset });
     if (seq !== weekSeq) return;
     setWeekTitle(`${dayLabel(data.from)} ~ ${dayLabel(data.to)}`);
+    weekEvents = new Map(data.events.map((ev) => [ev.id, ev]));
     weekBody.innerHTML = view === "calendar" ? renderWeekCalendar(data) : renderWeekList(data);
   } catch (e) {
     if (seq !== weekSeq) return;
@@ -697,7 +940,31 @@ $("week-prev").addEventListener("click", () => moveWeek(weekOffset - 1));
 $("week-next").addEventListener("click", () => moveWeek(weekOffset + 1));
 $("week-today").addEventListener("click", () => moveWeek(0));
 
+/** [Delete] on an event in the list or calendar view: deletes it right away, like [Delete] in the result message.
+ *  It goes to the recently deleted list, and the result message offers [Undo].
+ *  목록·캘린더 보기의 일정 [삭제]: 결과 메시지의 [삭제]처럼 바로 지운다.
+ *  최근 삭제한 일정 목록에 들어가고, 결과 메시지에 [되돌리기]가 나온다. */
+async function deleteFromWeek(btn) {
+  const ev = weekEvents.get(btn.dataset.wkdel);
+  if (!ev || btn.dataset.busy) return;
+  btn.dataset.busy = "1";
+  btn.textContent = t("popup.redeleting");
+  try {
+    await callHost({ action: "apply", delete: [{ id: ev.id, title: ev.title }] });
+  } catch (e) {
+    delete btn.dataset.busy;
+    btn.textContent = t("popup.delete");
+    return showError(e);
+  }
+  rememberDeleted([ev]);
+  const line = `<li data-id="${escapeHtml(ev.id)}">${bannerLine(known.get(ev.id))}</li>`;
+  setStatus("success", `<b>${escapeHtml(t("popup.done", { summary: t("popup.deleted", { n: 1 }) }))}</b><ul class="links">${line}</ul>`);
+  loadWeek();
+}
+
 weekBody.addEventListener("click", (e) => {
+  const del = e.target.closest("button[data-wkdel]");
+  if (del) return deleteFromWeek(del);
   const el = e.target.closest("[data-url]");
   if (el && isNotionUrl(el.dataset.url)) chrome.tabs.create({ url: el.dataset.url });
 });
