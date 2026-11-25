@@ -287,6 +287,7 @@ async function save(e) {
   delete $("language").dataset.touched;
   if (lang !== getLang()) {
     setLang(lang);
+    syncMenuTitle();
     ["pageStatus", "testStatus"].forEach((id) => showBanner($(id), "", ""));
     renderAll();
   }
