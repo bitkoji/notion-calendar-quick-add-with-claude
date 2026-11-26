@@ -120,3 +120,19 @@ py notion_cal.py --dry-run "..." # 해석 결과만 보기 (Notion 설정 불필
   참고: Notion Calendar 일정 창의 기본 "위치" 칸은 Google 캘린더 일정 전용이라, 노션 데이터베이스 일정에서는 `위치` 속성으로 보입니다.
 - 메모는 `NOTION_DESCRIPTION_PROPERTY`(텍스트 속성)에, 지정하지 않으면 페이지 본문에 기록됩니다.
 - 개인 사용 용도입니다. 구독 로그인을 이용해 다른 사람에게 서비스로 제공하는 것은 Anthropic 약관상 허용되지 않습니다.
+
+## AI 도구로부터 토큰 지키기
+
+`.env`에는 노션 토큰이 들어 있습니다. 이 프로젝트를 AI 코딩 도구로 열면 도구가 이 파일을 읽어 토큰을 AI 서비스로 보내거나, 답변·대화 기록에 남길 수 있습니다. 그래서 프로젝트에 많이 쓰는 도구가 `.env`를 읽지 않도록 하는 설정이 들어 있습니다(`.env.example`은 그대로 읽을 수 있음).
+
+| 도구 | 파일 | 막는 것 |
+|---|---|---|
+| Claude Code | `.claude/settings.json` | `.env` 읽기와 고치기 |
+| Cursor | `.cursorignore` | 에이전트·자동 완성·@ 참조에서 `.env` |
+| JetBrains AI Assistant | `.cursorignore` (JetBrains도 읽음) | 설정 → 도구 → AI Assistant → 프로젝트 설정의 **Enable .aiignore**를 켜야 적용 |
+| Gemini CLI | `.geminiignore` | 이 기능을 지원하는 도구에서 `.env` (바꾼 뒤 세션을 다시 시작해야 적용) |
+
+- 각 도구의 파일 읽기만 막으며, 에이전트가 실행하는 터미널 명령까지 모두 막지는 못합니다. 다른 AI 도구에는 적용되지 않습니다.
+- Windsurf(Devin Desktop): ignore 파일은 색인에만 적용됩니다. 에이전트가 `.env`를 읽지 못하게 하려면 설정에서 **Gitignore access**를 끄세요(`.env`는 이미 `.gitignore`에 있음).
+- 토큰을 AI 채팅에 붙여 넣지 마세요. 노출됐다고 생각되면 노션 연결 설정에서 토큰을 새로 발급해 `.env`에 넣으세요.
+- 프로그램은 지금처럼 `.env`를 읽고 저장합니다. `claude -p`를 부를 때는 입력한 문장과 기존 일정 목록만 보내고 토큰은 보내지 않으며, Claude의 도구는 꺼서 실행합니다.

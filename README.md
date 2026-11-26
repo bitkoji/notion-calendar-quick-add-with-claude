@@ -122,3 +122,19 @@ To update, run `git pull` in the project folder (or download the zip again), the
   Note: the built-in "Location" field in a Notion Calendar event is for Google Calendar events only, so for Notion database events it appears as the location property.
 - Notes go into `NOTION_DESCRIPTION_PROPERTY` (a text property), or into the page body if it isn't set.
 - For personal use only. Using a subscription login to provide this as a service to other people isn't allowed under Anthropic's terms.
+
+## Keeping your token away from AI tools
+
+`.env` holds your Notion token. If you open this project in an AI coding tool, the tool could read the file and send the token to the AI service, or leave it in its replies and chat history. The project includes settings that tell common tools not to read `.env` (`.env.example` stays readable):
+
+| Tool | File | What it blocks |
+|---|---|---|
+| Claude Code | `.claude/settings.json` | Reading and editing `.env` |
+| Cursor | `.cursorignore` | `.env` in the agent, Tab and @ references |
+| JetBrains AI Assistant | `.cursorignore` (read by JetBrains too) | Applies when **Enable .aiignore** is on in Settings → Tools → AI Assistant → Project Settings |
+| Gemini CLI | `.geminiignore` | `.env` in the tools that support it (restart the session after changes) |
+
+- These rules cover each tool's own file reading, not every terminal command an agent may run. Other AI tools are not covered.
+- Windsurf (Devin Desktop): its ignore file only affects indexing. To keep the agent from reading `.env`, turn off **Gitignore access** in its settings (`.env` is already in `.gitignore`).
+- Don't paste your token into an AI chat. If you think it was exposed, make a new token in Notion's connection settings and put it in `.env`.
+- The program itself still reads and saves `.env` as before. When it calls `claude -p`, it sends your text and the list of existing events, never the token, and runs Claude with its tools turned off.
