@@ -1,0 +1,5 @@
+# Keep AI tools from reading secrets (Notion token).
+# AI 도구가 비밀 값(노션 토큰)을 읽지 못하게 합니다.
+.env
+.env.*
+!.env.example
