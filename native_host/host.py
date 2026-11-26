@@ -122,6 +122,19 @@ def test_connection(token: str, database_id: str) -> dict:
     return {"database_id": db, "database_title": title, "properties": props}
 
 
+def page_id(value) -> str:
+    """A Notion page ID (32 hex characters, hyphens allowed), or an error.
+    Checked before the ID goes into an API path, so no other Notion endpoint can be reached.
+
+    노션 페이지 ID(16진수 32자, 하이픈 허용)인지 확인한다.
+    ID를 API 경로에 넣기 전에 검사해, 다른 노션 API 주소에 닿지 못하게 한다.
+    """
+    value = str(value or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{32}", value.replace("-", "")):
+        raise RuntimeError(tr("notion.badPageId"))
+    return value
+
+
 def handle(msg: dict) -> dict:
     action = msg.get("action")
     if action == "get_settings":
@@ -180,6 +193,10 @@ def handle(msg: dict) -> dict:
         }
     if action == "apply":
         to_add, to_delete, to_move = msg.get("add") or [], msg.get("delete") or [], msg.get("move") or []
+        # Check every ID before changing anything, so a bad one doesn't leave the request half done
+        # 하나라도 틀리면 아무것도 바꾸기 전에 멈추도록 먼저 모든 ID를 검사한다
+        for ev in [*to_move, *to_delete]:
+            page_id(ev.get("id"))
         notion = notion_client()
         moved = []
         for ev in to_move:
@@ -228,10 +245,8 @@ def handle(msg: dict) -> dict:
         return {"ok": True, "offset": offset, "from": first.isoformat(), "to": last.isoformat(),
                 "today": today.isoformat(), "events": events}
     if action == "restore":
-        page_id = str(msg.get("id", ""))
-        if not re.fullmatch(r"[0-9a-fA-F]{32}", page_id.replace("-", "")):
-            raise RuntimeError(tr("notion.badPageId"))
-        url = notion_client().restore_event(page_id)
+        pid = page_id(msg.get("id"))
+        url = notion_client().restore_event(pid)
         return {"ok": True, "url": url} if url else {"ok": True, "gone": True}
     raise RuntimeError(tr("host.unknownAction", action=action))
 
